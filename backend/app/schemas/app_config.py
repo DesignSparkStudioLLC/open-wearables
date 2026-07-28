@@ -1,9 +1,15 @@
 from datetime import timedelta
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from app.schemas.enums import DataGranularity
 from app.utils.config_utils import AccessLogLevel, format_duration, parse_duration
+
+
+def _restart_required() -> Any:
+    """Mark a field whose change takes effect only after a container restart."""
+    return Field(json_schema_extra={"restart_required": True})
 
 
 class AppConfig(BaseModel):
@@ -40,18 +46,18 @@ class AppConfig(BaseModel):
     email_max_retries: int
     user_invitation_code_expire_days: int
 
-    # Periodic task intervals (require a restart to take effect)
-    sync_interval_seconds: int
-    sleep_sync_interval_seconds: int
-    sleep_score_interval_seconds: int
-    resilience_score_interval_seconds: int
+    # Periodic task intervals (read once into the Celery beat schedule at startup)
+    sync_interval_seconds: int = _restart_required()
+    sleep_sync_interval_seconds: int = _restart_required()
+    sleep_score_interval_seconds: int = _restart_required()
+    resilience_score_interval_seconds: int = _restart_required()
 
-    # Outgoing webhooks + access log (require a restart to take effect)
-    outgoing_webhooks_enabled: bool
-    access_log_level: AccessLogLevel
-    log_error_response_body: bool
-    log_error_response_body_max_bytes: int
-    log_error_response_body_max_per_minute: int
+    # Outgoing webhooks + access log (read once at startup: Svix client / middleware closure)
+    outgoing_webhooks_enabled: bool = _restart_required()
+    access_log_level: AccessLogLevel = _restart_required()
+    log_error_response_body: bool = _restart_required()
+    log_error_response_body_max_bytes: int = _restart_required()
+    log_error_response_body_max_per_minute: int = _restart_required()
 
     # Data lifecycle
     archive_after_days: int | None
@@ -66,6 +72,21 @@ class AppConfig(BaseModel):
     @field_serializer("pull_sync_lookback")
     def _dump_lookback(self, v: timedelta | None) -> str | None:
         return format_duration(v) if v is not None else None
+
+
+# Derived single source of truth: which settings need a restart, read off the field markers above.
+RESTART_REQUIRED_KEYS: frozenset[str] = frozenset(
+    name
+    for name, field in AppConfig.model_fields.items()
+    if isinstance(field.json_schema_extra, dict) and field.json_schema_extra.get("restart_required")
+)
+
+
+class AppConfigResponse(BaseModel):
+    """Effective config plus the fields whose change needs a container restart (so the UI can warn)."""
+
+    config: AppConfig
+    restart_required_fields: list[str]
 
 
 class AppConfigUpdate(BaseModel):
@@ -103,8 +124,8 @@ class AppConfigUpdate(BaseModel):
     log_error_response_body_max_bytes: int | None = None
     log_error_response_body_max_per_minute: int | None = None
 
-    archive_after_days: int | None = None
-    delete_after_days: int | None = None
+    archive_after_days: int | None = Field(default=None, ge=1, le=3650)
+    delete_after_days: int | None = Field(default=None, ge=1, le=7300)
 
     @field_validator("pull_sync_lookback")
     @classmethod

@@ -7,8 +7,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import DataPointSeriesArchive
-from app.models.archival_setting import ArchivalSetting
+from app.models import AppSetting, DataPointSeriesArchive
 from app.schemas.enums import AggregationMethod, HealthScoreCategory, ProviderName
 from tests.factories import (
     ApiKeyFactory,
@@ -656,8 +655,8 @@ class TestActivitySummaryEndpoint:
         active_time_type = SeriesTypeDefinitionFactory.get_or_create_active_time()
 
         # Enable archival (singleton id=1) so the summaries service queries the archive.
-        if not db.query(ArchivalSetting).filter(ArchivalSetting.id == 1).first():
-            db.add(ArchivalSetting(id=1, archive_after_days=30, delete_after_days=None))
+        if not db.query(AppSetting).filter(AppSetting.id == 1).first():
+            db.add(AppSetting(id=1, archive_after_days=30, delete_after_days=None))
         # Archived daily active_time (archive holds one SUM row per day) for a day with no live data.
         db.add(
             DataPointSeriesArchive(
