@@ -1,5 +1,3 @@
-from typing import Any
-
 from app.database import DbSession
 from app.models import AppSetting
 
@@ -10,11 +8,8 @@ class AppSettingRepository:
     def get(self, db: DbSession) -> AppSetting:
         return db.query(AppSetting).filter(AppSetting.id == 1).one()
 
-    def update(self, db: DbSession, fields: dict[str, Any]) -> AppSetting:
-        """Set the given columns on the singleton row and commit."""
-        row = self.get(db)
-        for key, value in fields.items():
-            setattr(row, key, value)
+    def update(self, db: DbSession, setting: AppSetting) -> AppSetting:
+        """Persist changes made to the given (session-attached) settings row."""
         db.commit()
-        db.refresh(row)
-        return row
+        db.refresh(setting)
+        return setting

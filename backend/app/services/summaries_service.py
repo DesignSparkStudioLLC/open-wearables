@@ -201,8 +201,10 @@ class SummariesService:
         both exist for the same (date, source, device_model) key.
         """
         try:
-            self.archival_settings_repo.get(db_session)
+            setting = self.archival_settings_repo.get(db_session)
         except Exception:
+            return live_results
+        if setting.archive_after_days is None:  # archival disabled → nothing in the archive to merge
             return live_results
 
         series_type_ids = [

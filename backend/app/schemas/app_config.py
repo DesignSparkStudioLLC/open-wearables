@@ -1,10 +1,12 @@
 from datetime import timedelta
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from app.schemas.enums import DataGranularity
 from app.utils.config_utils import AccessLogLevel, format_duration, parse_duration
+
+RawPayloadStorage = Literal["disabled", "log", "s3"]
 
 
 def _restart_required() -> Any:
@@ -29,7 +31,7 @@ class AppConfig(BaseModel):
     score_backfill_days: int
 
     # Raw payload storage
-    raw_payload_storage: str
+    raw_payload_storage: RawPayloadStorage
     raw_payload_max_size_bytes: int
     store_fit_files: bool
 
@@ -100,7 +102,7 @@ class AppConfigUpdate(BaseModel):
     default_data_granularity: DataGranularity | None = None
     score_backfill_days: int | None = None
 
-    raw_payload_storage: str | None = None
+    raw_payload_storage: RawPayloadStorage | None = None
     raw_payload_max_size_bytes: int | None = None
     store_fit_files: bool | None = None
 

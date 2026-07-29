@@ -49,42 +49,50 @@ class ConfigService:
         if self._cache is not None and now - self._checked_at < _MICRO_TTL_SECONDS:
             return self._cache
 
-        redis = get_redis_client()
-        snapshot = redis.hgetall(_REDIS_KEY)
-        version, data = snapshot.get("version"), snapshot.get("data")
+        snapshot = get_redis_client().hgetall(_REDIS_KEY)
+        if snapshot.get("data") is None or snapshot.get("version") is None:
+            snapshot = self._seed_cold()
 
-        if version is None or data is None:
-            # Cold Redis (fresh start / flush): rebuild from the DB source of truth and publish.
-            config = self._reload_from_db()
-            redis.hset(_REDIS_KEY, "data", config.model_dump_json())
-            redis.hsetnx(_REDIS_KEY, "version", 0)
-            version = redis.hget(_REDIS_KEY, "version")
-        elif self._cache is not None and int(version) == self._seen_version:
+        version = int(snapshot["version"])
+        if self._cache is not None and version == self._seen_version:
             self._checked_at = now
             return self._cache
-        else:
-            config = AppConfig.model_validate_json(data)
 
-        self._cache = config
-        self._seen_version = int(version or 0)
+        self._cache = AppConfig.model_validate_json(snapshot["data"])
+        self._seen_version = version
         self._checked_at = now
-        return config
+        return self._cache
 
     def update(self, update: AppConfigUpdate) -> AppConfig:
         fields = update.model_dump(exclude_unset=True)
         if fields:
             with SessionLocal() as db:
-                self._repo.update(db, fields)
+                row = self._repo.get(db)
+                for key, value in fields.items():
+                    setattr(row, key, value)
+                self._repo.update(db, row)
 
         config = self._reload_from_db()
-        redis = get_redis_client()
-        redis.hset(_REDIS_KEY, "data", config.model_dump_json())
-        version = redis.hincrby(_REDIS_KEY, "version", 1)
+        # Publish data + version atomically so no reader ever pairs new data with the old version.
+        pipe = get_redis_client().pipeline()
+        pipe.hset(_REDIS_KEY, "data", config.model_dump_json())
+        pipe.hincrby(_REDIS_KEY, "version", 1)
+        version = pipe.execute()[1]
 
         self._cache = config
         self._seen_version = version
         self._checked_at = time.monotonic()
         return config
+
+    def _seed_cold(self) -> dict:
+        """Seed a cold/flushed Redis from the DB source of truth without clobbering a concurrent
+        writer, then return a fresh snapshot so data and version come from the same state."""
+        seed = self._reload_from_db().model_dump_json()
+        pipe = get_redis_client().pipeline()
+        pipe.hsetnx(_REDIS_KEY, "data", seed)
+        pipe.hsetnx(_REDIS_KEY, "version", 0)
+        pipe.execute()
+        return get_redis_client().hgetall(_REDIS_KEY)
 
     def backfill_from_env(self) -> None:
         """One-time copy of customized .env values into NULL columns (idempotent).

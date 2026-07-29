@@ -3,7 +3,7 @@ from fastapi import APIRouter, status
 from app.database import DbSession
 from app.integrations.celery.tasks.archival_task import run_daily_archival
 from app.schemas.app_config import RESTART_REQUIRED_KEYS, AppConfigResponse, AppConfigUpdate
-from app.schemas.utils import StorageEstimate
+from app.schemas.utils import StorageEstimate, TaskDispatchResponse
 from app.services import DeveloperDep
 from app.services.archival_service import archival_service
 from app.services.config_service import config_service
@@ -53,6 +53,6 @@ def get_storage(db: DbSession, _developer: DeveloperDep) -> StorageEstimate:
     summary="Trigger archival job manually",
     description="Dispatches the daily archival + retention job via Celery. Returns the task ID.",
 )
-def trigger_archival(_developer: DeveloperDep) -> dict[str, str]:
+def trigger_archival(_developer: DeveloperDep) -> TaskDispatchResponse:
     result = run_daily_archival.delay()
-    return {"task_id": result.id, "status": "dispatched"}
+    return TaskDispatchResponse(task_id=result.id, status="dispatched")

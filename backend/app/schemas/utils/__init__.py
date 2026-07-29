@@ -13,10 +13,15 @@ from .pagination import (
 from .query_params import (
     FilterParams,
 )
+from .tasks import (
+    TaskDispatchResponse,
+)
 
 __all__ = [
     # Archival
     "StorageEstimate",
+    # Tasks
+    "TaskDispatchResponse",
     # Query params
     "FilterParams",
     # Pagination
