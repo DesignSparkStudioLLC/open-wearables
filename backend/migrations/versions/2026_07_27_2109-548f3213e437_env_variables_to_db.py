@@ -64,6 +64,8 @@ def upgrade() -> None:
     op.rename_table("archival_settings", "app_settings")
     op.execute("ALTER TABLE app_settings RENAME CONSTRAINT ck_archival_settings_singleton TO ck_app_settings_singleton")
     op.execute("ALTER TABLE app_settings RENAME CONSTRAINT archival_settings_pkey TO app_settings_pkey")
+    # rename_table leaves the SERIAL sequence under the old name — rename it too.
+    op.execute("ALTER SEQUENCE IF EXISTS archival_settings_id_seq RENAME TO app_settings_id_seq")
 
     for column in _APP_SETTINGS_NEW_COLUMNS:
         op.add_column("app_settings", column)
@@ -79,6 +81,7 @@ def downgrade() -> None:
     for column in _APP_SETTINGS_NEW_COLUMNS:
         op.drop_column("app_settings", column.name)
 
+    op.execute("ALTER SEQUENCE IF EXISTS app_settings_id_seq RENAME TO archival_settings_id_seq")
     op.execute("ALTER TABLE app_settings RENAME CONSTRAINT app_settings_pkey TO archival_settings_pkey")
     op.execute("ALTER TABLE app_settings RENAME CONSTRAINT ck_app_settings_singleton TO ck_archival_settings_singleton")
     op.rename_table("app_settings", "archival_settings")
