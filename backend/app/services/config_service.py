@@ -3,19 +3,14 @@ from datetime import timedelta
 from typing import Any
 
 from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.config import settings
+from app.config import _raw_settings as settings  # raw pydantic Settings, not the proxy
 from app.database import SessionLocal
 from app.integrations.redis_client import get_redis_client
-from app.models import AppSetting
 from app.repositories.app_settings_repository import AppSettingRepository
-from app.schemas.app_config import AppConfig, AppConfigUpdate
+from app.schemas.app_config import MANAGED_SETTING_KEYS, AppConfig, AppConfigUpdate
 from app.utils.config_utils import format_duration
-
-# Columns that ConfigService manages (everything on app_settings except the bookkeeping ones).
-MANAGED_KEYS: tuple[str, ...] = tuple(
-    c.name for c in AppSetting.__table__.columns if c.name not in ("id", "created_at")
-)
 
 # access_log_level is derived from ENVIRONMENT at runtime, not a real env customization —
 # leave it NULL so the fallback (settings.access_log_level) keeps deriving it.
@@ -92,13 +87,26 @@ class ConfigService:
                 self._checked_at = now
                 return self._cache
             config, version = self._load_snapshot()
-        except RedisError:
-            # Redis unavailable: keep serving the in-RAM snapshot; hit the DB only if we have none.
-            config = self._cache if self._cache is not None else self._reload_from_db()
-            self._cache, self._checked_at = config, now
+            self._cache, self._seen_version, self._checked_at = config, version, now
             return config
+        except (RedisError, SQLAlchemyError):
+            return self._degraded(now)
 
-        self._cache, self._seen_version, self._checked_at = config, version, now
+    def _degraded(self, now: float) -> AppConfig:
+        """Infra hiccup — resolve in priority order: last-known RAM snapshot → DB → code defaults.
+
+        RAM first so a Redis blip never reverts a customized value; the DB (source of truth) before
+        code defaults so a fresh process during a Redis blip still gets the real values; code defaults
+        only when nothing is reachable (e.g. importing/tests without infra — pre-DB behaviour).
+        """
+        if self._cache is not None:
+            self._checked_at = now
+            return self._cache
+        try:
+            config = self._reload_from_db()
+        except SQLAlchemyError:
+            config = self._config_from_settings()
+        self._cache, self._checked_at = config, now
         return config
 
     def update(self, update: AppConfigUpdate) -> AppConfig:
@@ -129,7 +137,7 @@ class ConfigService:
         with SessionLocal() as db:
             row = self._repo.get(db)
             changed = False
-            for key in MANAGED_KEYS:
+            for key in MANAGED_SETTING_KEYS:
                 if key in _BACKFILL_SKIP or getattr(row, key) is not None:
                     continue
                 if key not in settings_fields:  # e.g. archive/delete_after_days have no env source
@@ -158,8 +166,13 @@ class ConfigService:
             row = self._repo.get(db)
         effective = {
             key: (getattr(row, key) if getattr(row, key) is not None else getattr(settings, key, None))
-            for key in MANAGED_KEYS
+            for key in MANAGED_SETTING_KEYS
         }
+        return AppConfig.model_validate(effective)
+
+    def _config_from_settings(self) -> AppConfig:
+        """Static fallback (no DB/Redis): effective config from env/code defaults only."""
+        effective = {key: getattr(settings, key, None) for key in MANAGED_SETTING_KEYS}
         return AppConfig.model_validate(effective)
 
 

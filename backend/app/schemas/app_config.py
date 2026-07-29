@@ -30,10 +30,10 @@ class AppConfig(BaseModel):
     default_data_granularity: DataGranularity
     score_backfill_days: int
 
-    # Raw payload storage
-    raw_payload_storage: RawPayloadStorage
-    raw_payload_max_size_bytes: int
-    store_fit_files: bool
+    # Raw payload storage (read once into the storage singleton at startup / worker_init)
+    raw_payload_storage: RawPayloadStorage = _restart_required()
+    raw_payload_max_size_bytes: int = _restart_required()
+    store_fit_files: bool = _restart_required()
 
     # Sleep session tracking
     sleep_end_gap_minutes: int
@@ -45,7 +45,7 @@ class AppConfig(BaseModel):
     email_from_address: str | None
     email_from_name: str
     invitation_expire_days: int
-    email_max_retries: int
+    email_max_retries: int = _restart_required()  # baked into the send_email task decorator at import
     user_invitation_code_expire_days: int
 
     # Periodic task intervals (read once into the Celery beat schedule at startup)
@@ -75,6 +75,8 @@ class AppConfig(BaseModel):
     def _dump_lookback(self, v: timedelta | None) -> str | None:
         return format_duration(v) if v is not None else None
 
+
+MANAGED_SETTING_KEYS: frozenset[str] = frozenset(AppConfig.model_fields)
 
 # Derived single source of truth: which settings need a restart, read off the field markers above.
 RESTART_REQUIRED_KEYS: frozenset[str] = frozenset(

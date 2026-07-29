@@ -1,16 +1,16 @@
-from app.schemas.app_config import RESTART_REQUIRED_KEYS, AppConfig
-from app.services.config_service import MANAGED_KEYS
+from app.models import AppSetting
+from app.schemas.app_config import MANAGED_SETTING_KEYS, RESTART_REQUIRED_KEYS, AppConfig
 
 
-def test_app_config_fields_match_managed_keys() -> None:
-    """AppConfig must expose exactly the app_settings columns ConfigService manages.
+def test_managed_keys_match_model_and_schema() -> None:
+    """AppConfig, the managed key set, and the app_settings columns must stay in lockstep.
 
-    Guards against drift: adding a column to AppSetting (and MANAGED_KEYS) without a matching
-    AppConfig field — or vice versa — breaks resolution/serialization, so fail loudly here.
+    Adding a column to AppSetting without a matching AppConfig field (or vice versa) breaks
+    resolution/serialization, so fail loudly here.
     """
-    assert set(AppConfig.model_fields) == set(MANAGED_KEYS)
+    columns = {c.name for c in AppSetting.__table__.columns} - {"id", "created_at"}
+    assert set(MANAGED_SETTING_KEYS) == set(AppConfig.model_fields) == columns
 
 
 def test_restart_required_keys_are_managed() -> None:
-    """Every restart-required marker must sit on a real managed setting."""
-    assert set(RESTART_REQUIRED_KEYS) <= set(MANAGED_KEYS)
+    assert set(RESTART_REQUIRED_KEYS) <= set(MANAGED_SETTING_KEYS)
