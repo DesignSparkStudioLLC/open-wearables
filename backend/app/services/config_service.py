@@ -76,6 +76,12 @@ class ConfigService:
         self._seen_version: int = -1
         self._checked_at: float = 0.0
 
+    def clear_cache(self) -> None:
+        """Drop the in-process snapshot so the next get() reloads. Used by tests between cases."""
+        self._cache = None
+        self._seen_version = -1
+        self._checked_at = 0.0
+
     def get(self) -> AppConfig:
         now = time.monotonic()
         if self._cache is not None and now - self._checked_at < _MICRO_TTL_SECONDS:
