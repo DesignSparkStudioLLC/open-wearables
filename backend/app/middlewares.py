@@ -71,6 +71,13 @@ def add_access_log_middleware(app: FastAPI) -> None:
             "status": status,
             "duration_ms": duration_ms,
         }
+
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                attributes["request_bytes"] = int(content_length)
+            except ValueError:
+                attributes["request_bytes"] = content_length
         if response_body is not None:
             attributes["response_body"] = response_body
         if error is not None:
