@@ -27,24 +27,20 @@ const ACCENT_STYLES: Record<
   }
 > = {
   cyan: {
-    iconBg:
-      'bg-[hsl(var(--primary-muted)/0.12)] border-[hsl(var(--primary-muted)/0.25)]',
-    iconColor: 'text-[hsl(var(--primary-muted))]',
+    iconBg: 'bg-primary-muted/12 border-primary-muted/25',
+    iconColor: 'text-primary-muted',
   },
   magenta: {
-    iconBg:
-      'bg-[hsl(var(--secondary-muted)/0.12)] border-[hsl(var(--secondary-muted)/0.25)]',
-    iconColor: 'text-[hsl(var(--secondary-muted))]',
+    iconBg: 'bg-secondary-muted/12 border-secondary-muted/25',
+    iconColor: 'text-secondary-muted',
   },
   purple: {
-    iconBg:
-      'bg-[hsl(var(--accent-muted)/0.12)] border-[hsl(var(--accent-muted)/0.25)]',
-    iconColor: 'text-[hsl(var(--accent-muted))]',
+    iconBg: 'bg-accent-muted/12 border-accent-muted/25',
+    iconColor: 'text-accent-muted',
   },
   green: {
-    iconBg:
-      'bg-[hsl(var(--success-muted)/0.12)] border-[hsl(var(--success-muted)/0.25)]',
-    iconColor: 'text-[hsl(var(--success-muted))]',
+    iconBg: 'bg-success-muted/12 border-success-muted/25',
+    iconColor: 'text-success-muted',
   },
 };
 
