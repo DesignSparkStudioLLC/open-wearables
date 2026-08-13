@@ -595,9 +595,9 @@ Visit the authorization URL in your browser, authorize, and verify the callback 
 ### 2. Test Data Sync
 
 <CodeGroup>
-```bash Sync Workouts
+```bash Sync All Data
 curl -X POST "http://localhost:8000/api/v1/providers/suunto/users/YOUR_USER_ID/sync" \
-  -H "X-API-Key: YOUR_API_KEY" \
+  -H "X-Open-Wearables-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json"
 ```
 

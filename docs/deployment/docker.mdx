@@ -46,7 +46,7 @@ The backend reads all of its configuration from environment variables at runtime
 
 A baseline Compose stack using the published images. It uses the `latest` tag to stay copy-pasteable; pin `sha-<commit>` tags for real deployments.
 
-```yaml
+```yaml docker-compose.yml
 services:
   db:
     image: postgres:18
