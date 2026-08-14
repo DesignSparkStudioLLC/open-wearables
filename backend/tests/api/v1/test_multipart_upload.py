@@ -14,9 +14,7 @@ BASE = "/api/v1/users/{user_id}/import/apple/xml/s3/multipart"
 
 
 class TestCreateMultipart:
-    def test_create_success(
-        self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]
-    ) -> None:
+    def test_create_success(self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]) -> None:
         user = UserFactory()
         headers = api_key_headers(ApiKeyFactory().id)
 
@@ -55,9 +53,7 @@ class TestCreateMultipart:
 
 
 class TestSignMultipart:
-    def test_sign_returns_urls(
-        self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]
-    ) -> None:
+    def test_sign_returns_urls(self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]) -> None:
         user = UserFactory()
         headers = api_key_headers(ApiKeyFactory().id)
         response = client.post(
@@ -94,8 +90,13 @@ class TestSignMultipart:
 
 class TestCompleteMultipart:
     def test_complete_client_mode_dispatches_processing(
-        self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]
+        self,
+        client: TestClient,
+        db: Session,
+        mock_external_apis: dict[str, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(settings, "apple_xml_upload_completion_mode", "client")
         user = UserFactory()
         headers = api_key_headers(ApiKeyFactory().id)
         key = f"{user.id}/raw/export.xml"
@@ -112,7 +113,9 @@ class TestCompleteMultipart:
         data = response.json()
         assert data["status"] == "processing"
         assert data["task_id"] == "task-123"
-        mock_task.delay.assert_called_once_with(bucket_name=settings.aws_bucket_name, object_key=key, user_id=str(user.id))
+        mock_task.delay.assert_called_once_with(
+            bucket_name=settings.aws_bucket_name, object_key=key, user_id=str(user.id)
+        )
 
     def test_complete_sns_mode_does_not_dispatch(
         self,
@@ -151,9 +154,7 @@ class TestCompleteMultipart:
 
 
 class TestAbortMultipart:
-    def test_abort_success(
-        self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]
-    ) -> None:
+    def test_abort_success(self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]) -> None:
         user = UserFactory()
         headers = api_key_headers(ApiKeyFactory().id)
         key = f"{user.id}/raw/export.xml"

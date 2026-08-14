@@ -49,4 +49,6 @@ def build_object_key(user_id: str, filename: str | None = None) -> str:
         clean_filename = "".join(c for c in filename if c.isalnum() or c in ".-_")
         if clean_filename:
             return f"{user_id}/raw/{clean_filename}"
-    return f"{user_id}/raw/{datetime.now(UTC)}.xml"
+    # Compact, URL-safe UTC timestamp (no spaces/colons) so the key needs no encoding.
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{user_id}/raw/{timestamp}.xml"

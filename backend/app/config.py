@@ -4,7 +4,7 @@ import warnings
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote
 
 if TYPE_CHECKING:
@@ -242,7 +242,7 @@ class Settings(BaseSettings):
     #   "client" — the frontend calls the /complete endpoint (works for S3 and MinIO alike)
     #   "sns"    — an S3 bucket event fans out through SNS to /sns/notification (AWS only)
     # Only the selected mode dispatches the import task, so processing never runs twice.
-    apple_xml_upload_completion_mode: str = "client"
+    apple_xml_upload_completion_mode: Literal["client", "sns"] = "client"
 
     xml_chunk_size: int = 50_000
 
