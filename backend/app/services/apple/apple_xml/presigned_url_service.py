@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from logging import Logger, getLogger
 
 from botocore.exceptions import ClientError
@@ -8,7 +7,7 @@ from app.schemas.providers.apple.apple_xml import (
     PresignedURLRequest,
     PresignedURLResponse,
 )
-from app.services.apple.apple_xml.aws_service import AWS_BUCKET_NAME, get_s3_client
+from app.services.apple.apple_xml.aws_service import AWS_BUCKET_NAME, build_object_key, get_s3_client
 
 
 class PresignedURLService:
@@ -17,14 +16,7 @@ class PresignedURLService:
         self.s3_client = get_s3_client()
 
     def generate_file_key(self, user_id: str, filename: str | None = None) -> str:
-        timestamp = datetime.now(UTC)
-
-        if filename:
-            clean_filename = "".join(c for c in filename if c.isalnum() or c in ".-_")
-            file_key = f"{user_id}/raw/{clean_filename}" if clean_filename else f"{user_id}/raw/{timestamp}.xml"
-        else:
-            file_key = f"{user_id}/raw/{timestamp}.xml"
-
+        file_key = build_object_key(user_id, filename)
         self.log.debug(f"Generated file key: {file_key}")
         return file_key
 

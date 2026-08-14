@@ -184,7 +184,7 @@ export function useUploadAppleXmlViaS3() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({
+    mutationFn: ({
       userId,
       file,
       onProgress,
@@ -192,25 +192,12 @@ export function useUploadAppleXmlViaS3() {
       userId: string;
       file: File;
       onProgress?: (percent: number) => void;
-    }) => {
-      // Step 1: Get presigned URL from backend
-      const presignedData = await usersService.getAppleXmlPresignedUrl(userId, {
-        filename: file.name,
-        max_file_size: file.size,
-      });
-
-      // Step 2: Upload directly to S3
-      await usersService.uploadToS3(
-        presignedData.upload_url,
-        presignedData.form_fields,
-        file,
-        onProgress
-      );
-
-      return presignedData;
-    },
+    }) =>
+      // Multipart upload straight to object storage (S3 or MinIO). Parts are PUT
+      // via presigned URLs; the backend finalizes the object and starts processing.
+      usersService.uploadAppleXmlViaMultipart(userId, file, onProgress),
     onSuccess: (_data, { userId }) => {
-      // Invalidate user data (processing will happen asynchronously via SQS)
+      // Invalidate user data (processing happens asynchronously in a Celery task)
       queryClient.invalidateQueries({
         queryKey: queryKeys.users.detail(userId),
       });
@@ -219,14 +206,14 @@ export function useUploadAppleXmlViaS3() {
         refetchType: 'active',
       });
       toast.success(
-        'XML file uploaded to S3 successfully. Processing will begin shortly.'
+        'XML file uploaded to object storage. Processing will begin shortly.'
       );
     },
     onError: (error: unknown) => {
       const message =
         error instanceof Error
           ? error.message
-          : 'Failed to upload XML file to S3';
+          : 'Failed to upload XML file to object storage';
       toast.error(message);
     },
   });
