@@ -2,11 +2,15 @@
 
 from math import ceil
 
+import pytest
+from pydantic import ValidationError
+
 from app.schemas.providers.apple.apple_xml import (
     DEFAULT_PART_SIZE,
     MAX_PART_SIZE,
     MAX_PARTS,
     MIN_PART_SIZE,
+    MultipartSignRequest,
     recommended_part_size,
 )
 
@@ -36,3 +40,18 @@ class TestRecommendedPartSize:
     def test_part_size_never_above_maximum(self) -> None:
         # 5 TiB, the max object size
         assert recommended_part_size(5 * 1024 * 1024 * 1024 * 1024) <= MAX_PART_SIZE
+
+
+class TestMultipartSignRequest:
+    def test_accepts_valid_part_numbers(self) -> None:
+        req = MultipartSignRequest(key="u/raw/x.xml", upload_id="up", part_numbers=[1, 2, MAX_PARTS])
+        assert req.part_numbers == [1, 2, MAX_PARTS]
+
+    @pytest.mark.parametrize("part_number", [0, -1, MAX_PARTS + 1])
+    def test_rejects_out_of_range_part_numbers(self, part_number: int) -> None:
+        with pytest.raises(ValidationError):
+            MultipartSignRequest(key="u/raw/x.xml", upload_id="up", part_numbers=[part_number])
+
+    def test_rejects_empty_part_numbers(self) -> None:
+        with pytest.raises(ValidationError):
+            MultipartSignRequest(key="u/raw/x.xml", upload_id="up", part_numbers=[])

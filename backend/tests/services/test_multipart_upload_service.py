@@ -113,9 +113,7 @@ class TestAbort:
 
         service.abort(USER_ID, key, "upload-1")
 
-        client.abort_multipart_upload.assert_called_once_with(
-            Bucket="test-bucket", Key=key, UploadId="upload-1"
-        )
+        client.abort_multipart_upload.assert_called_once_with(Bucket="test-bucket", Key=key, UploadId="upload-1")
 
     def test_abort_rejects_foreign_key(self) -> None:
         service = _service(MagicMock())

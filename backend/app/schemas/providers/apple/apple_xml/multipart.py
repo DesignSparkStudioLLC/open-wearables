@@ -8,6 +8,7 @@ objects up to 5 TiB.
 """
 
 from math import ceil
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 
@@ -57,7 +58,7 @@ class MultipartCreateResponse(BaseModel):
 class MultipartSignRequest(BaseModel):
     key: str = Field(..., max_length=1024, description="Object key returned by create")
     upload_id: str = Field(..., max_length=1024, description="Upload id returned by create")
-    part_numbers: list[int] = Field(
+    part_numbers: list[Annotated[int, Field(ge=1, le=MAX_PARTS)]] = Field(
         ...,
         min_length=1,
         max_length=MAX_PARTS,
