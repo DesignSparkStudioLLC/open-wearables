@@ -25,9 +25,9 @@ from app.services.apple.healthkit.import_service import (
 )
 from app.services.raw_payload_storage import delete_payload_from_s3, get_payload_from_s3
 from app.services.sync_status_service import (
-    completed,
-    failed,
-    started,
+    emit_sync_completed,
+    emit_sync_failed,
+    emit_sync_started,
     try_record_data_types,
 )
 from app.utils.structured_logging import log_structured
@@ -152,7 +152,7 @@ def process_sdk_upload(
         provider=provider,
     )
 
-    started(
+    emit_sync_started(
         user_uuid,
         provider,
         SyncSource.SDK,
@@ -203,7 +203,7 @@ def process_sdk_upload(
             message = f"{provider.capitalize()} batch saved"
             if dropped_count:
                 message += f" ({dropped_count} record(s) dropped by validation)"
-            completed(
+            emit_sync_completed(
                 user_uuid,
                 provider,
                 SyncSource.SDK,
@@ -233,7 +233,7 @@ def process_sdk_upload(
                 # keeps its payload for diagnosis.
                 delete_payload_from_s3(payload_ref)
         else:
-            failed(
+            emit_sync_failed(
                 user_uuid,
                 provider,
                 SyncSource.SDK,
