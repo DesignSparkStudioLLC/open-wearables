@@ -234,6 +234,15 @@ class Settings(BaseSettings):
     aws_region: str = "eu-north-1"
     # for topic ARN verification from SNS notification (signature is verified regardless)
     aws_sns_topic_arn: SecretStr | None = None
+    # Optional custom endpoint for S3-compatible object storage (e.g. MinIO). Also read
+    # natively by boto3 from AWS_ENDPOINT_URL; declaring it here lets the Apple XML flow
+    # force path-style addressing + SigV4 so presigned/multipart URLs work against MinIO.
+    aws_endpoint_url: str | None = None
+    # How a completed S3/MinIO XML upload triggers processing:
+    #   "client" — the frontend calls the /complete endpoint (works for S3 and MinIO alike)
+    #   "sns"    — an S3 bucket event fans out through SNS to /sns/notification (AWS only)
+    # Only the selected mode dispatches the import task, so processing never runs twice.
+    apple_xml_upload_completion_mode: str = "client"
 
     xml_chunk_size: int = 50_000
 

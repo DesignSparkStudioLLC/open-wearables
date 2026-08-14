@@ -64,24 +64,10 @@ def configure(
 
 
 def _create_s3_client(endpoint_url: str | None = None) -> Any:
-    """Create a boto3 S3 client using app AWS settings."""
-    try:
-        import boto3
-        from botocore.exceptions import NoCredentialsError
+    """Create a boto3 S3 client using app AWS settings (shared factory)."""
+    from app.services.s3_client import create_s3_client
 
-        from app.config import settings
-
-        kwargs: dict[str, Any] = {"region_name": settings.aws_region}
-        if settings.aws_access_key_id and settings.aws_secret_access_key:
-            kwargs["aws_access_key_id"] = settings.aws_access_key_id
-            kwargs["aws_secret_access_key"] = settings.aws_secret_access_key.get_secret_value()
-        if endpoint_url:
-            kwargs["endpoint_url"] = endpoint_url
-
-        return boto3.client("s3", **kwargs)
-    except (NoCredentialsError, AttributeError, Exception) as e:
-        logger.error("Cannot create S3 client for raw payload storage: %s", e)
-        return None
+    return create_s3_client(endpoint_url)
 
 
 def store_raw_payload(

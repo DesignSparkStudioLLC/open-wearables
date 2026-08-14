@@ -148,6 +148,20 @@ class SNSService:
             )
             return UploadDataResponse(status_code=status.HTTP_200_OK, response="ignored: s3:TestEvent", user_id=None)
 
+        # Only dispatch when SNS is the configured completion trigger; otherwise the
+        # frontend's /complete call already handles it and we must not process twice.
+        if settings.apple_xml_upload_completion_mode != "sns":
+            log_structured(
+                logger,
+                "info",
+                "Ignoring S3 notification: completion mode is client-driven",
+                provider="apple_xml",
+                task="sns_notification",
+            )
+            return UploadDataResponse(
+                status_code=status.HTTP_200_OK, response="ignored: client-driven completion", user_id=None
+            )
+
         records = message_body.get("Records", [])
         dispatched = 0
 

@@ -4,14 +4,24 @@ from json import JSONDecodeError
 from fastapi import APIRouter, HTTPException, Request, UploadFile, status
 from pydantic import ValidationError
 
+from app.config import settings
+from app.integrations.celery.tasks.process_aws_upload_task import process_aws_upload
 from app.integrations.celery.tasks.process_xml_upload_task import process_xml_upload
 from app.schemas.providers.apple.apple_xml import (
+    MultipartAbortRequest,
+    MultipartCompleteRequest,
+    MultipartCompleteResponse,
+    MultipartCreateRequest,
+    MultipartCreateResponse,
+    MultipartSignRequest,
+    MultipartSignResponse,
     PresignedURLRequest,
     PresignedURLResponse,
     SNSNotification,
 )
 from app.schemas.responses.upload import UploadDataResponse
 from app.services import ApiKeyDep
+from app.services.apple.apple_xml.multipart_upload_service import multipart_upload_service
 from app.services.apple.apple_xml.presigned_url_service import presigned_url_service
 from app.services.apple.apple_xml.sns_service import sns_service
 
@@ -26,6 +36,83 @@ def import_xml_presigned_url(
 ) -> PresignedURLResponse:
     """Generate presigned URL for XML file upload and trigger processing task."""
     return presigned_url_service.create_presigned_url(user_id, request)
+
+
+@router.post("/users/{user_id}/import/apple/xml/s3/multipart/create")
+def create_multipart_upload(
+    user_id: str,
+    request: MultipartCreateRequest,
+    _api_key: ApiKeyDep,
+) -> MultipartCreateResponse:
+    """Start a multipart upload for a (potentially very large) XML file to S3/MinIO."""
+    return multipart_upload_service.create(
+        user_id=user_id,
+        filename=request.filename,
+        content_type=request.content_type,
+        file_size=request.file_size,
+    )
+
+
+@router.post("/users/{user_id}/import/apple/xml/s3/multipart/sign")
+def sign_multipart_parts(
+    user_id: str,
+    request: MultipartSignRequest,
+    _api_key: ApiKeyDep,
+) -> MultipartSignResponse:
+    """Presign upload URLs for a batch of parts of an in-progress multipart upload."""
+    return multipart_upload_service.sign_parts(
+        user_id=user_id,
+        key=request.key,
+        upload_id=request.upload_id,
+        part_numbers=request.part_numbers,
+        expiration_seconds=request.expiration_seconds,
+    )
+
+
+@router.post("/users/{user_id}/import/apple/xml/s3/multipart/complete")
+def complete_multipart_upload(
+    user_id: str,
+    request: MultipartCompleteRequest,
+    _api_key: ApiKeyDep,
+) -> MultipartCompleteResponse:
+    """Finalize a multipart upload and, in client-driven mode, dispatch processing.
+
+    When ``APPLE_XML_UPLOAD_COMPLETION_MODE`` is ``"sns"`` the import task is instead
+    triggered by the S3 bucket event, so this endpoint only finalizes the object.
+    """
+    key = multipart_upload_service.complete(
+        user_id=user_id,
+        key=request.key,
+        upload_id=request.upload_id,
+        parts=request.parts,
+    )
+
+    task_id: str | None = None
+    if settings.apple_xml_upload_completion_mode == "client":
+        task = process_aws_upload.delay(
+            bucket_name=settings.aws_bucket_name,
+            object_key=key,
+            user_id=user_id,
+        )
+        task_id = task.id
+
+    return MultipartCompleteResponse(
+        status="processing" if task_id else "uploaded",
+        key=key,
+        bucket=settings.aws_bucket_name,  # ty:ignore[invalid-argument-type]
+        task_id=task_id,
+    )
+
+
+@router.post("/users/{user_id}/import/apple/xml/s3/multipart/abort")
+def abort_multipart_upload(
+    user_id: str,
+    request: MultipartAbortRequest,
+    _api_key: ApiKeyDep,
+) -> dict[str, str]:
+    """Abort an incomplete multipart upload and discard its parts."""
+    multipart_upload_service.abort(user_id=user_id, key=request.key, upload_id=request.upload_id)
+    return {"status": "aborted", "key": request.key}
 
 
 @router.post("/users/{user_id}/import/apple/xml/direct")

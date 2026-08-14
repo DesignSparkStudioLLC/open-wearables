@@ -1,0 +1,103 @@
+"""Schemas for S3 / MinIO multipart uploads of Apple Health XML exports.
+
+Multipart upload is used for every object-storage upload so the same flow works for
+small and multi-gigabyte files, on AWS S3 and MinIO alike. Limits mirror the S3
+"quick facts" (https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html):
+parts are 5 MiB-5 GiB (last part may be smaller), at most 10,000 parts per upload,
+objects up to 5 TiB.
+"""
+
+from math import ceil
+
+from pydantic import BaseModel, Field
+
+MIN_PART_SIZE = 5 * 1024 * 1024  # 5 MiB (S3 minimum, except the final part)
+MAX_PART_SIZE = 5 * 1024 * 1024 * 1024  # 5 GiB
+MAX_PARTS = 10_000
+DEFAULT_PART_SIZE = 100 * 1024 * 1024  # 100 MiB
+MAX_OBJECT_SIZE = 5 * 1024 * 1024 * 1024 * 1024  # 5 TiB
+
+MIN_EXPIRATION_SECONDS = 60  # 1 minute
+MAX_EXPIRATION_SECONDS = 3600  # 1 hour
+DEFAULT_EXPIRATION_SECONDS = 3600  # 1 hour (large uploads need long-lived part URLs)
+
+
+def recommended_part_size(file_size: int) -> int:
+    """Pick a part size that keeps the upload within S3's 10,000-part limit.
+
+    Uses ``DEFAULT_PART_SIZE`` for typical files and grows it (rounded up to a whole
+    number of MiB) only when the file is large enough to otherwise exceed MAX_PARTS.
+    """
+    part_size = DEFAULT_PART_SIZE
+    if ceil(file_size / part_size) > MAX_PARTS:
+        needed = ceil(file_size / MAX_PARTS)
+        # round up to the next whole MiB for tidy, aligned parts
+        part_size = ceil(needed / (1024 * 1024)) * (1024 * 1024)
+    return min(max(part_size, MIN_PART_SIZE), MAX_PART_SIZE)
+
+
+class MultipartCreateRequest(BaseModel):
+    filename: str = Field("", max_length=200, description="Original filename")
+    content_type: str = Field("application/xml", max_length=100, description="Object content type")
+    file_size: int = Field(
+        ...,
+        ge=MIN_PART_SIZE,
+        le=MAX_OBJECT_SIZE,
+        description="Total file size in bytes (used to recommend a part size)",
+    )
+
+
+class MultipartCreateResponse(BaseModel):
+    upload_id: str = Field(..., description="S3 multipart upload id")
+    key: str = Field(..., description="S3 object key the parts belong to")
+    bucket: str = Field(..., description="Target bucket")
+    part_size: int = Field(..., description="Recommended part size in bytes")
+
+
+class MultipartSignRequest(BaseModel):
+    key: str = Field(..., max_length=1024, description="Object key returned by create")
+    upload_id: str = Field(..., max_length=1024, description="Upload id returned by create")
+    part_numbers: list[int] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_PARTS,
+        description="Part numbers (1-based) to presign upload URLs for",
+    )
+    expiration_seconds: int = Field(
+        default=DEFAULT_EXPIRATION_SECONDS,
+        ge=MIN_EXPIRATION_SECONDS,
+        le=MAX_EXPIRATION_SECONDS,
+        description="Presigned URL lifetime in seconds",
+    )
+
+
+class SignedPart(BaseModel):
+    part_number: int = Field(..., ge=1, le=MAX_PARTS)
+    url: str
+
+
+class MultipartSignResponse(BaseModel):
+    urls: list[SignedPart]
+
+
+class CompletedPart(BaseModel):
+    part_number: int = Field(..., ge=1, le=MAX_PARTS)
+    etag: str = Field(..., max_length=256, description="ETag returned by S3 for the uploaded part")
+
+
+class MultipartCompleteRequest(BaseModel):
+    key: str = Field(..., max_length=1024)
+    upload_id: str = Field(..., max_length=1024)
+    parts: list[CompletedPart] = Field(..., min_length=1, max_length=MAX_PARTS)
+
+
+class MultipartCompleteResponse(BaseModel):
+    status: str
+    key: str
+    bucket: str
+    task_id: str | None = None
+
+
+class MultipartAbortRequest(BaseModel):
+    key: str = Field(..., max_length=1024)
+    upload_id: str = Field(..., max_length=1024)

@@ -2,6 +2,10 @@ import { apiClient } from '../client';
 import { API_ENDPOINTS, API_CONFIG } from '../config';
 import { getToken } from '@/lib/auth/session';
 import { appendSearchParams } from '@/lib/utils/url';
+import {
+  planMultipartParts,
+  PART_UPLOAD_CONCURRENCY,
+} from '@/lib/utils/multipart';
 import type {
   UserRead,
   UserCreate,
@@ -10,6 +14,14 @@ import type {
   PaginatedUsersResponse,
   PresignedURLRequest,
   PresignedURLResponse,
+  MultipartCreateRequest,
+  MultipartCreateResponse,
+  MultipartSignRequest,
+  MultipartSignResponse,
+  MultipartCompleteRequest,
+  MultipartCompleteResponse,
+  MultipartAbortRequest,
+  CompletedPart,
   InvitationCode,
 } from '../types';
 
@@ -121,11 +133,194 @@ export const usersService = {
     }
   },
 
+  async createMultipartUpload(
+    userId: string,
+    request: MultipartCreateRequest
+  ): Promise<MultipartCreateResponse> {
+    return apiClient.post<MultipartCreateResponse>(
+      API_ENDPOINTS.userAppleXmlMultipartCreate(userId),
+      request
+    );
+  },
+
+  async signMultipartParts(
+    userId: string,
+    request: MultipartSignRequest
+  ): Promise<MultipartSignResponse> {
+    return apiClient.post<MultipartSignResponse>(
+      API_ENDPOINTS.userAppleXmlMultipartSign(userId),
+      request
+    );
+  },
+
+  async completeMultipartUpload(
+    userId: string,
+    request: MultipartCompleteRequest
+  ): Promise<MultipartCompleteResponse> {
+    return apiClient.post<MultipartCompleteResponse>(
+      API_ENDPOINTS.userAppleXmlMultipartComplete(userId),
+      request
+    );
+  },
+
+  async abortMultipartUpload(
+    userId: string,
+    request: MultipartAbortRequest
+  ): Promise<void> {
+    await apiClient.post<{ status: string }>(
+      API_ENDPOINTS.userAppleXmlMultipartAbort(userId),
+      request
+    );
+  },
+
+  /**
+   * Upload an Apple Health XML file to S3/MinIO using multipart upload.
+   *
+   * Works identically against AWS S3 and a self-hosted MinIO server. The file is
+   * split into parts, each part is PUT directly to object storage via a presigned
+   * URL, and the collected ETags are handed back to the backend to finalize the
+   * object (which then dispatches processing in client-driven completion mode).
+   */
+  async uploadAppleXmlViaMultipart(
+    userId: string,
+    file: File,
+    onProgress?: (percent: number) => void
+  ): Promise<MultipartCompleteResponse> {
+    const created = await this.createMultipartUpload(userId, {
+      filename: file.name,
+      content_type: file.type || 'application/xml',
+      file_size: file.size,
+    });
+
+    try {
+      const plan = planMultipartParts(file.size, created.part_size);
+
+      const { urls } = await this.signMultipartParts(userId, {
+        key: created.key,
+        upload_id: created.upload_id,
+        part_numbers: plan.map((p) => p.partNumber),
+      });
+      const urlByPart = new Map(urls.map((u) => [u.part_number, u.url]));
+
+      // Track uploaded bytes per part so overall progress reflects real throughput.
+      const loadedPerPart = Array.from({ length: plan.length }, () => 0);
+      const reportProgress = () => {
+        if (!onProgress) return;
+        const loaded = loadedPerPart.reduce((sum, n) => sum + n, 0);
+        onProgress(
+          file.size > 0 ? Math.round((loaded / file.size) * 100) : 100
+        );
+      };
+
+      // Order-independent: the backend sorts parts by number before completing.
+      const completedParts: CompletedPart[] = [];
+
+      const uploadOne = async (index: number): Promise<void> => {
+        const part = plan[index];
+        const url = urlByPart.get(part.partNumber);
+        if (!url) {
+          throw new Error(`Missing presigned URL for part ${part.partNumber}`);
+        }
+        const blob = file.slice(part.start, part.end);
+        const etag = await putPartWithProgress(url, blob, (loaded) => {
+          loadedPerPart[index] = loaded;
+          reportProgress();
+        });
+        loadedPerPart[index] = blob.size;
+        reportProgress();
+        completedParts.push({ part_number: part.partNumber, etag });
+      };
+
+      // Bounded-concurrency worker pool over the part indices.
+      let nextIndex = 0;
+      const worker = async (): Promise<void> => {
+        while (nextIndex < plan.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          await uploadOne(index);
+        }
+      };
+      await Promise.all(
+        Array.from(
+          { length: Math.min(PART_UPLOAD_CONCURRENCY, plan.length) },
+          () => worker()
+        )
+      );
+
+      const result = await this.completeMultipartUpload(userId, {
+        key: created.key,
+        upload_id: created.upload_id,
+        parts: completedParts,
+      });
+      onProgress?.(100);
+      return result;
+    } catch (error) {
+      // Best-effort cleanup so incomplete parts don't linger in the bucket.
+      await this.abortMultipartUpload(userId, {
+        key: created.key,
+        upload_id: created.upload_id,
+      }).catch(() => undefined);
+      throw error;
+    }
+  },
+
   async generateInvitationCode(userId: string): Promise<InvitationCode> {
     const endpoint = API_ENDPOINTS.userInvitationCode(userId);
     return apiClient.post<InvitationCode>(endpoint, null);
   },
 };
+
+/**
+ * PUT a single multipart part directly to object storage and resolve with its ETag.
+ *
+ * XHR is used (not fetch) so we can report byte-level upload progress. The ETag is
+ * read from the response header, which requires the bucket's CORS policy to expose
+ * `ETag` (see the MinIO/S3 setup docs).
+ */
+function putPartWithProgress(
+  url: string,
+  body: Blob,
+  onProgress?: (loadedBytes: number) => void
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) onProgress(event.loaded);
+      });
+    }
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(
+          new Error(`Part upload failed: ${xhr.status} ${xhr.statusText}`)
+        );
+        return;
+      }
+      const etag = xhr.getResponseHeader('ETag');
+      if (!etag) {
+        reject(
+          new Error(
+            'Object storage did not return an ETag. Ensure the bucket CORS policy exposes the ETag header.'
+          )
+        );
+        return;
+      }
+      resolve(etag);
+    });
+    xhr.addEventListener('error', () =>
+      reject(new Error('Network error during part upload'))
+    );
+    xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+    xhr.addEventListener('timeout', () =>
+      reject(new Error('Part upload timed out'))
+    );
+
+    xhr.send(body);
+  });
+}
 
 interface UploadWithProgressOptions {
   onProgress?: (percent: number) => void;

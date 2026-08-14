@@ -217,6 +217,49 @@ curl -X POST "https://s3.amazonaws.com/bucket/key" \
   **Important:** When uploading to S3 with presigned POST, you must include all `form_fields` as form data, and the `file` field must be last.
 </Note>
 
+## Method 1b: Multipart Upload (S3 or MinIO)
+
+The portal uploads large exports using **multipart upload**, which splits the file into
+parts uploaded in parallel via presigned URLs. It works identically against AWS S3 and a
+self-hosted **MinIO** server, so a local deployment with no AWS account can still accept
+multi-gigabyte Apple Health exports through the UI.
+
+The flow is four calls (all authenticated, all under `/import/apple/xml/s3/multipart`):
+
+<Steps>
+  <Step title="create">
+    `POST .../multipart/create` with `{ "filename", "content_type", "file_size" }` →
+    returns `{ "upload_id", "key", "bucket", "part_size" }`. Split the file into parts of
+    `part_size` bytes (the last part may be smaller).
+  </Step>
+  <Step title="sign">
+    `POST .../multipart/sign` with `{ "key", "upload_id", "part_numbers": [1, 2, ...] }` →
+    returns a presigned `PUT` URL for each part.
+  </Step>
+  <Step title="upload parts">
+    `PUT` each part's bytes to its presigned URL. Capture the `ETag` response header of
+    every part.
+  </Step>
+  <Step title="complete">
+    `POST .../multipart/complete` with `{ "key", "upload_id", "parts": [{ "part_number", "etag" }] }`.
+    In the default **client** completion mode this also dispatches the import task and
+    returns a `task_id`. Use `POST .../multipart/abort` to discard an incomplete upload.
+  </Step>
+</Steps>
+
+<Note>
+  Browser part uploads read the `ETag` from the `PUT` response, so the bucket's CORS policy
+  must allow `PUT` and **expose the `ETag` header** (`ExposeHeaders: ["ETag"]`).
+</Note>
+
+<Info>
+  **Completion mode** — `APPLE_XML_UPLOAD_COMPLETION_MODE` controls how a finished upload
+  starts processing: `client` (default) dispatches from the `/complete` call and works for
+  S3 and MinIO; `sns` instead waits for an S3 bucket event via SNS (AWS only). Only the
+  selected mode dispatches, so a file is never processed twice. Point the whole flow at
+  MinIO by setting `AWS_ENDPOINT_URL` (e.g. `http://minio:9000`).
+</Info>
+
 ## Complete Example Workflow
 
 <Tabs>
@@ -284,11 +327,15 @@ curl -X POST "https://s3.amazonaws.com/bucket/key" \
       </Step>
 
       <Step title="Processing Happens Automatically">
-        The system automatically:
+        With `APPLE_XML_UPLOAD_COMPLETION_MODE=sns` (AWS), the system automatically:
         - Detects the S3 upload via S3 event notification → SNS
         - SNS sends an HTTPS notification to the backend
         - `process_aws_upload` Celery task downloads and processes the XML file
         - Imports workouts and time series data to database
+
+        In the default `client` mode, the presigned-POST method above has no completion
+        trigger — use **Method 1b (multipart)** and its `/complete` call instead, which is
+        what the portal uses and which works for both S3 and MinIO.
       </Step>
     </Steps>
 
