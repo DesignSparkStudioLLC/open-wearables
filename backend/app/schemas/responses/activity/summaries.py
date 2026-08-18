@@ -178,5 +178,6 @@ class RecoverySummary(BaseModel):
     sleep_efficiency_percent: float | None = None
     resting_heart_rate_bpm: int | None = None
     avg_hrv_sdnn_ms: float | None = Field(None, description="Average HRV (SDNN)")
+    avg_hrv_rmssd_ms: float | None = Field(None, description="Average HRV (RMSSD)")
     avg_spo2_percent: float | None = None
     recovery_score: int | None = Field(None, ge=0, le=100, description="0-100 score")
