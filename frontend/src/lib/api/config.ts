@@ -33,6 +33,8 @@ export const API_ENDPOINTS = {
     `/api/v1/users/${userId}/import/apple/xml/direct`,
   userAppleXmlPresignedUrl: (userId: string) =>
     `/api/v1/users/${userId}/import/apple/xml/s3`,
+  userAppleXmlS3Complete: (userId: string) =>
+    `/api/v1/users/${userId}/import/apple/xml/s3/complete`,
   userInvitationCode: (userId: string) =>
     `/api/v1/users/${userId}/invitation-code`,
 

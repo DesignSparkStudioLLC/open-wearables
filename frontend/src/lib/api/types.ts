@@ -87,6 +87,10 @@ export interface PresignedURLResponse {
   bucket: string;
 }
 
+export interface S3CompleteRequest {
+  file_key: string;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;

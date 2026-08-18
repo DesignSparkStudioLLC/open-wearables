@@ -48,6 +48,23 @@ class PresignedURLService:
                 detail=f"S3 bucket error: {error_code}",
             ) from e
 
+    def assert_object_exists(self, file_key: str) -> None:
+        """Confirm the uploaded object is actually in the bucket before dispatching processing."""
+        if not self.s3_client:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="S3 client not configured")
+
+        try:
+            self.s3_client.head_object(Bucket=AWS_BUCKET_NAME, Key=file_key)
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"]
+            if error_code in ("404", "NoSuchKey", "NotFound"):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Uploaded object not found in S3"
+                ) from e
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"S3 object error: {error_code}"
+            ) from e
+
     def create_presigned_url(self, user_id: str, request: PresignedURLRequest) -> PresignedURLResponse:
         if not self.s3_client:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="S3 client not configured")

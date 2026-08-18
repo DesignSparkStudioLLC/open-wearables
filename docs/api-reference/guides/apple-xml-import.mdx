@@ -217,6 +217,52 @@ curl -X POST "https://s3.amazonaws.com/bucket/key" \
   **Important:** When uploading to S3 with presigned POST, you must include all `form_fields` as form data, and the `file` field must be last.
 </Note>
 
+### Step 3: Confirm the Upload
+
+Once the upload to S3 succeeds, tell the backend so it dispatches processing. This replaces the previous S3 event notification / SNS flow.
+
+<CodeGroup>
+```bash cURL
+curl -X POST "https://api.example.com/api/v1/users/{user_id}/import/apple/xml/s3/complete" \
+  -H "accept: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"file_key": "<file_key from Step 1>"}'
+```
+
+```python Python
+complete_response = requests.post(
+    f"https://api.example.com/api/v1/users/{user_id}/import/apple/xml/s3/complete",
+    headers={
+        "accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+    },
+    json={"file_key": presigned_data["file_key"]},
+)
+complete_response.raise_for_status()
+```
+
+```javascript JavaScript
+await fetch(
+  `https://api.example.com/api/v1/users/${userId}/import/apple/xml/s3/complete`,
+  {
+    method: 'POST',
+    headers: {
+      'accept': 'application/json',
+      'Authorization': `Bearer ${access_token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ file_key: presignedData.file_key }),
+  }
+);
+```
+</CodeGroup>
+
+<Note>
+  The `file_key` must be the one returned by Step 1 - it is scoped to the user (`{user_id}/raw/...`); other keys are rejected with `403`.
+</Note>
+
 ## Complete Example Workflow
 
 <Tabs>
@@ -283,12 +329,24 @@ curl -X POST "https://s3.amazonaws.com/bucket/key" \
         ```
       </Step>
 
-      <Step title="Processing Happens Automatically">
-        The system automatically:
-        - Detects the S3 upload via S3 event notification → SNS
-        - SNS sends an HTTPS notification to the backend
-        - `process_aws_upload` Celery task downloads and processes the XML file
-        - Imports workouts and time series data to database
+      <Step title="Confirm the Upload">
+        ```python
+        # Tell the backend the upload finished; this dispatches processing.
+        complete_response = requests.post(
+            f"{API_URL}/api/v1/users/{USER_ID}/import/apple/xml/s3/complete",
+            headers=headers,
+            json={"file_key": presigned_data["file_key"]},
+        )
+        complete_response.raise_for_status()
+        print("✓ Processing dispatched")
+        ```
+      </Step>
+
+      <Step title="Processing Happens in the Background">
+        After the confirm call the backend:
+        - Verifies the object exists in the bucket
+        - Dispatches the `process_aws_upload` Celery task, which downloads and parses the XML
+        - Imports workouts and time series data to the database
       </Step>
     </Steps>
 
@@ -362,7 +420,15 @@ curl -X POST "https://s3.amazonaws.com/bucket/key" \
             upload_response.raise_for_status()
         
         print(f"✓ Upload complete! File key: {presigned_data['file_key']}")
-        print("Processing will happen in the background...")
+
+        # Step 4: Confirm the upload so the backend dispatches processing
+        complete_response = requests.post(
+            f"{API_URL}/api/v1/users/{USER_ID}/import/apple/xml/s3/complete",
+            headers=headers,
+            json={"file_key": presigned_data["file_key"]},
+        )
+        complete_response.raise_for_status()
+        print("✓ Processing dispatched - it will run in the background")
 
     if __name__ == "__main__":
         main()

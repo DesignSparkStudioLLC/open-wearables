@@ -9,6 +9,7 @@ import type {
   PaginatedUsersResponse,
   PresignedURLRequest,
   PresignedURLResponse,
+  S3CompleteRequest,
   InvitationCode,
 } from '../types';
 
@@ -95,6 +96,16 @@ export const usersService = {
     if (!response.ok) {
       throw new Error(`S3 upload failed: ${response.statusText}`);
     }
+  },
+
+  async completeAppleXmlS3Upload(
+    userId: string,
+    request: S3CompleteRequest
+  ): Promise<void> {
+    return apiClient.post<void>(
+      API_ENDPOINTS.userAppleXmlS3Complete(userId),
+      request
+    );
   },
 
   async generateInvitationCode(userId: string): Promise<InvitationCode> {

@@ -7,7 +7,7 @@ from .aws import (
     MIN_FILE_SIZE,
     PresignedURLRequest,
     PresignedURLResponse,
-    SNSNotification,
+    S3CompleteRequest,
 )
 from .stats import (
     XMLParseStats,
@@ -23,7 +23,7 @@ __all__ = [
     "MIN_FILE_SIZE",
     "MAX_FILE_SIZE",
     "DEFAULT_FILE_SIZE",
+    "S3CompleteRequest",
     # ParseStats
     "XMLParseStats",
-    "SNSNotification",
 ]

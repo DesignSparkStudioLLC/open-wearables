@@ -232,8 +232,9 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: SecretStr | None = None
     aws_region: str = "eu-north-1"
-    # for topic ARN verification from SNS notification (signature is verified regardless)
-    aws_sns_topic_arn: SecretStr | None = None
+    # Optional override for S3-compatible object stores (MinIO, Railway Object Storage).
+    # Leave unset to use the default AWS S3 endpoint.
+    aws_s3_endpoint_url: str | None = None
 
     xml_chunk_size: int = 50_000
 

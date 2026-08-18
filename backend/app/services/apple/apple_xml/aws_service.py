@@ -16,19 +16,7 @@ def get_s3_client():  # noqa: ANN201
         return boto3.client(
             "s3",
             region_name=AWS_REGION,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key.get_secret_value(),  # ty:ignore[unresolved-attribute]
-        )
-    except (NoCredentialsError, AttributeError):
-        log_structured(logger, "warning", "AWS credentials not configured")
-        return None
-
-
-def get_sns_client():  # noqa: ANN201
-    try:
-        return boto3.client(
-            "sns",
-            region_name=AWS_REGION,
+            endpoint_url=settings.aws_s3_endpoint_url,
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key.get_secret_value(),  # ty:ignore[unresolved-attribute]
         )

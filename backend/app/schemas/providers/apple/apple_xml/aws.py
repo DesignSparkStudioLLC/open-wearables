@@ -33,20 +33,7 @@ class PresignedURLResponse(BaseModel):
     bucket: str
 
 
-class SNSNotification(BaseModel):
-    """Handles both SubscriptionConfirmation and Notification message types from SNS."""
+class S3CompleteRequest(BaseModel):
+    """Client-side confirmation that a presigned S3 upload finished, replacing SNS notifications."""
 
-    message_type: str = Field(..., alias="Type")
-    message_id: str = Field(..., alias="MessageId")
-    topic_arn: str = Field(..., alias="TopicArn")
-    message: str = Field(..., alias="Message")
-    timestamp: str = Field(..., alias="Timestamp")
-    signature: str = Field(..., alias="Signature")
-    signature_version: str = Field(..., alias="SignatureVersion")
-    signing_cert_url: str = Field(..., alias="SigningCertURL")
-    # Only present on SubscriptionConfirmation
-    token: str | None = Field(None, alias="Token")
-    subscribe_url: str | None = Field(None, alias="SubscribeURL")
-    # Only present on Notification
-    subject: str | None = Field(None, alias="Subject")
-    unsubscribe_url: str | None = Field(None, alias="UnsubscribeURL")
+    file_key: str = Field(..., min_length=1, max_length=1024, description="S3 object key returned by the presign step")

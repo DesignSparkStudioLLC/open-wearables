@@ -191,6 +191,12 @@ export function useUploadAppleXmlViaS3() {
         file
       );
 
+      // Step 3: Tell the backend the upload finished so processing is dispatched.
+      // Replaces the S3 -> SNS -> webhook flow.
+      await usersService.completeAppleXmlS3Upload(userId, {
+        file_key: presignedData.file_key,
+      });
+
       return presignedData;
     },
     onSuccess: (_data, { userId }) => {
