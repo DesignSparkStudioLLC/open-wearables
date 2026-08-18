@@ -21,6 +21,7 @@ from app.schemas.providers.apple.apple_xml import (
 )
 from app.schemas.responses.upload import UploadDataResponse
 from app.services import ApiKeyDep
+from app.services.apple.apple_xml.aws_service import AWS_BUCKET_NAME
 from app.services.apple.apple_xml.multipart_upload_service import multipart_upload_service
 from app.services.apple.apple_xml.presigned_url_service import presigned_url_service
 from app.services.apple.apple_xml.sns_service import sns_service
@@ -90,7 +91,7 @@ def complete_multipart_upload(
     task_id: str | None = None
     if settings.apple_xml_upload_completion_mode == "client":
         task = process_aws_upload.delay(
-            bucket_name=settings.aws_bucket_name,
+            bucket_name=AWS_BUCKET_NAME,
             object_key=key,
             user_id=user_id,
         )
@@ -99,7 +100,7 @@ def complete_multipart_upload(
     return MultipartCompleteResponse(
         status="processing" if task_id else "uploaded",
         key=key,
-        bucket=settings.aws_bucket_name,  # ty:ignore[invalid-argument-type]
+        bucket=AWS_BUCKET_NAME,  # ty:ignore[invalid-argument-type]
         task_id=task_id,
     )
 

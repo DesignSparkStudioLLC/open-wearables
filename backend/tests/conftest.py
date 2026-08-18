@@ -313,6 +313,7 @@ def mock_external_apis() -> Generator[dict[str, MagicMock], None, None]:
         patch("app.services.apple.apple_xml.aws_service.AWS_BUCKET_NAME", "test-bucket"),
         patch("app.services.apple.apple_xml.presigned_url_service.AWS_BUCKET_NAME", "test-bucket"),
         patch("app.services.apple.apple_xml.multipart_upload_service.AWS_BUCKET_NAME", "test-bucket"),
+        patch("app.api.routes.v1.import_xml.AWS_BUCKET_NAME", "test-bucket"),
         patch("app.services.apple.apple_xml.aws_service.get_s3_client", return_value=mock_s3),
         patch("app.services.apple.apple_xml.presigned_url_service.get_s3_client", return_value=mock_s3),
         patch("app.services.apple.apple_xml.multipart_upload_service.get_s3_client", return_value=mock_s3),

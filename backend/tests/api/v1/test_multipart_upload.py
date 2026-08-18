@@ -113,9 +113,8 @@ class TestCompleteMultipart:
         data = response.json()
         assert data["status"] == "processing"
         assert data["task_id"] == "task-123"
-        mock_task.delay.assert_called_once_with(
-            bucket_name=settings.aws_bucket_name, object_key=key, user_id=str(user.id)
-        )
+        assert data["bucket"] == "test-bucket"
+        mock_task.delay.assert_called_once_with(bucket_name="test-bucket", object_key=key, user_id=str(user.id))
 
     def test_complete_sns_mode_does_not_dispatch(
         self,
