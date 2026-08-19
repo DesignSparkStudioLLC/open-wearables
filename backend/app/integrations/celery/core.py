@@ -150,6 +150,14 @@ def create_celery() -> Celery:
             "args": (),
             "kwargs": {},
         },
+        "cleanup-stale-apple-xml-multipart-uploads": {
+            "task": (
+                "app.integrations.celery.tasks.cleanup_multipart_uploads_task.cleanup_stale_apple_xml_multipart_uploads"
+            ),
+            "schedule": crontab(minute=17),  # Hourly, offset from other periodic work
+            "args": (),
+            "kwargs": {},
+        },
         "fill-missing-sleep-scores": {
             "task": "app.integrations.celery.tasks.fill_missing_sleep_scores_task.fill_missing_sleep_scores",
             "schedule": float(settings.sleep_score_interval_seconds),

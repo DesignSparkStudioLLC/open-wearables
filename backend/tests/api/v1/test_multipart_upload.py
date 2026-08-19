@@ -101,7 +101,7 @@ class TestCompleteMultipart:
         headers = api_key_headers(ApiKeyFactory().id)
         key = f"{user.id}/raw/export.xml"
 
-        with patch("app.api.routes.v1.import_xml.process_aws_upload") as mock_task:
+        with patch("app.api.routes.v1.import_xml.complete_and_process_aws_upload") as mock_task:
             mock_task.delay.return_value = MagicMock(id="task-123")
             response = client.post(
                 BASE.format(user_id=user.id) + "/complete",
@@ -114,7 +114,38 @@ class TestCompleteMultipart:
         assert data["status"] == "processing"
         assert data["task_id"] == "task-123"
         assert data["bucket"] == "test-bucket"
-        mock_task.delay.assert_called_once_with(bucket_name="test-bucket", object_key=key, user_id=str(user.id))
+        mock_task.delay.assert_called_once_with(
+            bucket_name="test-bucket",
+            object_key=key,
+            upload_id="test-upload-id",
+            parts=[{"part_number": 1, "etag": "e1"}],
+            user_id=str(user.id),
+        )
+        mock_external_apis["s3"].complete_multipart_upload.assert_not_called()
+
+    def test_complete_client_mode_keeps_upload_incomplete_when_queueing_fails(
+        self,
+        client: TestClient,
+        db: Session,
+        mock_external_apis: dict[str, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings, "apple_xml_upload_completion_mode", "client")
+        user = UserFactory()
+        headers = api_key_headers(ApiKeyFactory().id)
+        key = f"{user.id}/raw/export.xml"
+
+        with patch("app.api.routes.v1.import_xml.complete_and_process_aws_upload") as mock_task:
+            mock_task.delay.side_effect = RuntimeError("broker unavailable")
+            response = client.post(
+                BASE.format(user_id=user.id) + "/complete",
+                headers=headers,
+                json={"key": key, "upload_id": "test-upload-id", "parts": [{"part_number": 1, "etag": "e1"}]},
+            )
+
+        assert response.status_code == 503
+        assert "remains incomplete" in response.json()["detail"]
+        mock_external_apis["s3"].complete_multipart_upload.assert_not_called()
 
     def test_complete_sns_mode_does_not_dispatch(
         self,
@@ -128,7 +159,7 @@ class TestCompleteMultipart:
         headers = api_key_headers(ApiKeyFactory().id)
         key = f"{user.id}/raw/export.xml"
 
-        with patch("app.api.routes.v1.import_xml.process_aws_upload") as mock_task:
+        with patch("app.api.routes.v1.import_xml.complete_and_process_aws_upload") as mock_task:
             response = client.post(
                 BASE.format(user_id=user.id) + "/complete",
                 headers=headers,

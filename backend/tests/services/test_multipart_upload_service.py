@@ -7,6 +7,7 @@ import pytest
 from botocore.exceptions import ClientError
 from fastapi import HTTPException
 
+from app.config import settings
 from app.schemas.providers.apple.apple_xml import CompletedPart
 from app.services.apple.apple_xml.multipart_upload_service import MultipartUploadService
 
@@ -16,6 +17,9 @@ USER_ID = "user-123"
 def _service(client: MagicMock | None) -> MultipartUploadService:
     service = MultipartUploadService(getLogger(__name__))
     service.s3_client = client
+    # By default the public (presigning) client is the same object, so tests that assert on
+    # `client` see the presigned calls too. TestPublicEndpoint overrides it with a distinct mock.
+    service.public_s3_client = client
     return service
 
 
@@ -29,7 +33,7 @@ class TestCreate:
         client.create_multipart_upload.return_value = {"UploadId": "upload-1"}
         service = _service(client)
 
-        result = service.create(USER_ID, "export.xml", "application/xml", file_size=50 * 1024 * 1024)
+        result = service.create_upload(USER_ID, "export.xml", "application/xml", file_size=50 * 1024 * 1024)
 
         assert result.upload_id == "upload-1"
         assert result.key.startswith(f"{USER_ID}/raw/")
@@ -37,19 +41,52 @@ class TestCreate:
         assert result.part_size > 0
         client.create_multipart_upload.assert_called_once()
 
+    def test_create_enforces_server_side_encryption(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "aws_sse_algorithm", "AES256")
+        client = MagicMock()
+        client.create_multipart_upload.return_value = {"UploadId": "upload-1"}
+        service = _service(client)
+
+        service.create_upload(USER_ID, "export.xml", "application/xml", file_size=50 * 1024 * 1024)
+
+        kwargs = client.create_multipart_upload.call_args[1]
+        assert kwargs["ServerSideEncryption"] == "AES256"
+
+    def test_create_omits_sse_when_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "aws_sse_algorithm", "")
+        client = MagicMock()
+        client.create_multipart_upload.return_value = {"UploadId": "upload-1"}
+        service = _service(client)
+
+        service.create_upload(USER_ID, "export.xml", "application/xml", file_size=50 * 1024 * 1024)
+
+        assert "ServerSideEncryption" not in client.create_multipart_upload.call_args[1]
+
     def test_create_without_client_raises_503(self) -> None:
         service = _service(None)
         with pytest.raises(HTTPException) as exc:
-            service.create(USER_ID, "export.xml", "application/xml", file_size=1024 * 1024 * 5)
+            service.create_upload(USER_ID, "export.xml", "application/xml", file_size=1024 * 1024 * 5)
         assert exc.value.status_code == 503
 
-    def test_create_client_error_raises_500(self) -> None:
+    def test_create_without_bucket_raises_503(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "aws_bucket_name", None)
+        client = MagicMock()
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.create_upload(USER_ID, "export.xml", "application/xml", file_size=1024 * 1024 * 5)
+
+        assert exc.value.status_code == 503
+        assert exc.value.detail == "S3 bucket not configured"
+        client.create_multipart_upload.assert_not_called()
+
+    def test_create_transient_client_error_raises_503(self) -> None:
         client = MagicMock()
         client.create_multipart_upload.side_effect = _client_error("InternalError")
         service = _service(client)
         with pytest.raises(HTTPException) as exc:
-            service.create(USER_ID, "export.xml", "application/xml", file_size=1024 * 1024 * 5)
-        assert exc.value.status_code == 500
+            service.create_upload(USER_ID, "export.xml", "application/xml", file_size=1024 * 1024 * 5)
+        assert exc.value.status_code == 503
 
 
 class TestSignParts:
@@ -59,7 +96,7 @@ class TestSignParts:
         service = _service(client)
         key = f"{USER_ID}/raw/export.xml"
 
-        result = service.sign_parts(USER_ID, key, "upload-1", [1, 2, 3], expiration_seconds=3600)
+        result = service.sign_upload_parts(USER_ID, key, "upload-1", [1, 2, 3], expiration_seconds=3600)
 
         assert [p.part_number for p in result.urls] == [1, 2, 3]
         assert [p.url for p in result.urls] == ["url-1", "url-2", "url-3"]
@@ -68,7 +105,7 @@ class TestSignParts:
     def test_sign_parts_rejects_foreign_key(self) -> None:
         service = _service(MagicMock())
         with pytest.raises(HTTPException) as exc:
-            service.sign_parts(USER_ID, "other-user/raw/x.xml", "upload-1", [1], expiration_seconds=3600)
+            service.sign_upload_parts(USER_ID, "other-user/raw/x.xml", "upload-1", [1], expiration_seconds=3600)
         assert exc.value.status_code == 403
 
 
@@ -82,7 +119,7 @@ class TestComplete:
             CompletedPart(part_number=1, etag="etag-1"),
         ]
 
-        returned_key = service.complete(USER_ID, key, "upload-1", parts)
+        returned_key = service.complete_upload(USER_ID, key, "upload-1", parts)
 
         assert returned_key == key
         _, kwargs = client.complete_multipart_upload.call_args
@@ -92,17 +129,59 @@ class TestComplete:
     def test_complete_rejects_foreign_key(self) -> None:
         service = _service(MagicMock())
         with pytest.raises(HTTPException) as exc:
-            service.complete(USER_ID, "other/raw/x.xml", "upload-1", [CompletedPart(part_number=1, etag="e")])
+            service.complete_upload(
+                USER_ID,
+                "other/raw/x.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="e")],
+            )
         assert exc.value.status_code == 403
 
-    def test_complete_client_error_raises_500(self) -> None:
+    def test_complete_missing_upload_raises_404(self) -> None:
         client = MagicMock()
         client.complete_multipart_upload.side_effect = _client_error("NoSuchUpload")
         service = _service(client)
         key = f"{USER_ID}/raw/export.xml"
         with pytest.raises(HTTPException) as exc:
-            service.complete(USER_ID, key, "upload-1", [CompletedPart(part_number=1, etag="e")])
-        assert exc.value.status_code == 500
+            service.complete_upload(USER_ID, key, "upload-1", [CompletedPart(part_number=1, etag="e")])
+        assert exc.value.status_code == 404
+
+    def test_complete_invalid_part_raises_400(self) -> None:
+        client = MagicMock()
+        client.complete_multipart_upload.side_effect = _client_error("InvalidPart")
+        service = _service(client)
+        key = f"{USER_ID}/raw/export.xml"
+
+        with pytest.raises(HTTPException) as exc:
+            service.complete_upload(USER_ID, key, "upload-1", [CompletedPart(part_number=1, etag="e")])
+
+        assert exc.value.status_code == 400
+
+    def test_complete_unknown_storage_error_raises_502(self) -> None:
+        client = MagicMock()
+        client.complete_multipart_upload.side_effect = _client_error("AccessDenied")
+        service = _service(client)
+        key = f"{USER_ID}/raw/export.xml"
+
+        with pytest.raises(HTTPException) as exc:
+            service.complete_upload(USER_ID, key, "upload-1", [CompletedPart(part_number=1, etag="e")])
+
+        assert exc.value.status_code == 502
+
+    def test_complete_accepts_explicit_bucket_for_background_job(self) -> None:
+        client = MagicMock()
+        service = _service(client)
+        key = f"{USER_ID}/raw/export.xml"
+
+        service.complete_upload(
+            USER_ID,
+            key,
+            "upload-1",
+            [CompletedPart(part_number=1, etag="e")],
+            bucket_name="queued-bucket",
+        )
+
+        assert client.complete_multipart_upload.call_args.kwargs["Bucket"] == "queued-bucket"
 
 
 class TestAbort:
@@ -111,12 +190,131 @@ class TestAbort:
         service = _service(client)
         key = f"{USER_ID}/raw/export.xml"
 
-        service.abort(USER_ID, key, "upload-1")
+        service.abort_upload(USER_ID, key, "upload-1")
 
         client.abort_multipart_upload.assert_called_once_with(Bucket="test-bucket", Key=key, UploadId="upload-1")
 
     def test_abort_rejects_foreign_key(self) -> None:
         service = _service(MagicMock())
         with pytest.raises(HTTPException) as exc:
-            service.abort(USER_ID, "other/raw/x.xml", "upload-1")
+            service.abort_upload(USER_ID, "other/raw/x.xml", "upload-1")
         assert exc.value.status_code == 403
+
+    def test_abort_is_idempotent_when_upload_no_longer_exists(self) -> None:
+        client = MagicMock()
+        client.abort_multipart_upload.side_effect = _client_error("NoSuchUpload")
+        service = _service(client)
+
+        service.abort_upload(USER_ID, f"{USER_ID}/raw/export.xml", "upload-1")
+
+        client.abort_multipart_upload.assert_called_once()
+
+
+class TestValidateCompletionRequest:
+    def test_returns_configured_bucket_when_uploaded_parts_match(self) -> None:
+        client = MagicMock()
+        client.list_parts.return_value = {
+            "Parts": [{"PartNumber": 1, "ETag": "etag-1"}],
+            "IsTruncated": False,
+        }
+        service = _service(client)
+
+        assert (
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+            == "test-bucket"
+        )
+
+    def test_rejects_foreign_key_before_queueing(self) -> None:
+        service = _service(MagicMock())
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                "other/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+
+        assert exc.value.status_code == 403
+
+    def test_rejects_parts_that_do_not_match_storage(self) -> None:
+        client = MagicMock()
+        client.list_parts.return_value = {
+            "Parts": [{"PartNumber": 1, "ETag": "stored-etag"}],
+            "IsTruncated": False,
+        }
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="different-etag")],
+            )
+
+        assert exc.value.status_code == 400
+
+    def test_missing_upload_is_reported_as_404(self) -> None:
+        client = MagicMock()
+        client.list_parts.side_effect = _client_error("NoSuchUpload")
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+
+        assert exc.value.status_code == 404
+
+
+class TestPublicEndpoint:
+    """Presigned part URLs must be generated by the browser-facing (public) client, while
+    the backend-side create/complete/abort calls use the internal client."""
+
+    def test_sign_uses_public_client(self) -> None:
+        internal = MagicMock()
+        public = MagicMock()
+        public.generate_presigned_url.return_value = "https://localhost:8333/signed"
+        service = MultipartUploadService(getLogger(__name__))
+        service.s3_client = internal
+        service.public_s3_client = public
+
+        key = f"{USER_ID}/raw/export.xml"
+        result = service.sign_upload_parts(USER_ID, key, "upload-1", [1, 2], expiration_seconds=3600)
+
+        assert len(result.urls) == 2
+        assert public.generate_presigned_url.call_count == 2
+        internal.generate_presigned_url.assert_not_called()
+
+    def test_create_uses_internal_client(self) -> None:
+        internal = MagicMock()
+        internal.create_multipart_upload.return_value = {"UploadId": "upload-1"}
+        public = MagicMock()
+        service = MultipartUploadService(getLogger(__name__))
+        service.s3_client = internal
+        service.public_s3_client = public
+
+        service.create_upload(USER_ID, "export.xml", "application/xml", file_size=50 * 1024 * 1024)
+
+        internal.create_multipart_upload.assert_called_once()
+        public.create_multipart_upload.assert_not_called()
+
+    def test_sign_falls_back_to_internal_client(self) -> None:
+        internal = MagicMock()
+        internal.generate_presigned_url.return_value = "https://storage/signed"
+        service = _service(internal)
+        service.public_s3_client = None
+
+        key = f"{USER_ID}/raw/export.xml"
+        service.sign_upload_parts(USER_ID, key, "upload-1", [1], expiration_seconds=3600)
+
+        internal.generate_presigned_url.assert_called_once()

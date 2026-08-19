@@ -122,6 +122,12 @@ class SNSService:
         return notification.topic_arn == settings.aws_sns_topic_arn.get_secret_value()
 
     def _confirm_subscription(self, notification: SNSNotification) -> UploadDataResponse:
+        if not self.sns_client:
+            return UploadDataResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                response="SNS client not configured",
+                user_id=None,
+            )
         try:
             self.sns_client.confirm_subscription(
                 TopicArn=notification.topic_arn,

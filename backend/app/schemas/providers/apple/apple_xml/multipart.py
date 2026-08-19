@@ -1,10 +1,9 @@
-"""Schemas for S3 / MinIO multipart uploads of Apple Health XML exports.
+"""Schemas for S3-compatible multipart uploads of Apple Health XML exports.
 
-Multipart upload is used for every object-storage upload so the same flow works for
-small and multi-gigabyte files, on AWS S3 and MinIO alike. Limits mirror the S3
-"quick facts" (https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html):
-parts are 5 MiB-5 GiB (last part may be smaller), at most 10,000 parts per upload,
-objects up to 5 TiB.
+S3's protocol limits remain code constants because they are interoperability
+invariants: parts are 5 MiB-5 GiB (the final part may be smaller), with at most
+10,000 parts per upload. Open Wearables separately caps Apple XML uploads at the
+shared ``MAX_FILE_SIZE`` product limit.
 """
 
 from math import ceil
@@ -12,15 +11,18 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from .aws import MAX_FILE_SIZE
+
 MIN_PART_SIZE = 5 * 1024 * 1024  # 5 MiB (S3 minimum, except the final part)
 MAX_PART_SIZE = 5 * 1024 * 1024 * 1024  # 5 GiB
 MAX_PARTS = 10_000
-DEFAULT_PART_SIZE = 100 * 1024 * 1024  # 100 MiB
-MAX_OBJECT_SIZE = 5 * 1024 * 1024 * 1024 * 1024  # 5 TiB
+# At the 5 GiB product limit, 100 MiB yields at most 52 requests. This keeps browser
+# request overhead modest without making retries unnecessarily expensive.
+DEFAULT_PART_SIZE = 100 * 1024 * 1024
 
 MIN_EXPIRATION_SECONDS = 60  # 1 minute
-MAX_EXPIRATION_SECONDS = 3600  # 1 hour
-DEFAULT_EXPIRATION_SECONDS = 3600  # 1 hour (large uploads need long-lived part URLs)
+MAX_EXPIRATION_SECONDS = 24 * 60 * 60  # 24 hours
+DEFAULT_EXPIRATION_SECONDS = MAX_EXPIRATION_SECONDS  # Supports slow multi-gigabyte uploads
 
 
 def recommended_part_size(file_size: int) -> int:
@@ -43,7 +45,7 @@ class MultipartCreateRequest(BaseModel):
     file_size: int = Field(
         ...,
         ge=MIN_PART_SIZE,
-        le=MAX_OBJECT_SIZE,
+        le=MAX_FILE_SIZE,
         description="Total file size in bytes (used to recommend a part size)",
     )
 

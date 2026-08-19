@@ -217,12 +217,11 @@ curl -X POST "https://s3.amazonaws.com/bucket/key" \
   **Important:** When uploading to S3 with presigned POST, you must include all `form_fields` as form data, and the `file` field must be last.
 </Note>
 
-## Method 1b: Multipart Upload (S3 or MinIO)
+## Method 1b: Multipart Upload (S3-compatible storage)
 
 The portal uploads large exports using **multipart upload**, which splits the file into
-parts uploaded in parallel via presigned URLs. It works identically against AWS S3 and a
-self-hosted **MinIO** server, so a local deployment with no AWS account can still accept
-multi-gigabyte Apple Health exports through the UI.
+parts uploaded in parallel via presigned URLs. It works against AWS S3 and self-hosted
+S3-compatible storage such as the SeaweedFS service bundled with Docker Compose.
 
 The flow is four calls (all authenticated, all under `/import/apple/xml/s3/multipart`):
 
@@ -247,6 +246,13 @@ The flow is four calls (all authenticated, all under `/import/apple/xml/s3/multi
   </Step>
 </Steps>
 
+<Info>
+  Multipart XML uploads accept files from 5 MiB through 5 GiB. The default 100 MiB
+  part size keeps a maximum-size upload to 52 part requests, balancing browser request
+  overhead with the cost of retrying a failed part. Always use the `part_size` returned
+  by the create endpoint rather than hard-coding it in a client.
+</Info>
+
 <Note>
   Browser part uploads read the `ETag` from the `PUT` response, so the bucket's CORS policy
   must allow `PUT` and **expose the `ETag` header** (`ExposeHeaders: ["ETag"]`).
@@ -256,9 +262,22 @@ The flow is four calls (all authenticated, all under `/import/apple/xml/s3/multi
   **Completion mode** — `APPLE_XML_UPLOAD_COMPLETION_MODE` controls how a finished upload
   starts processing: `client` (default) dispatches from the `/complete` call and works for
   S3 and MinIO; `sns` instead waits for an S3 bucket event via SNS (AWS only). Only the
-  selected mode dispatches, so a file is never processed twice. Point the whole flow at
-  MinIO by setting `AWS_ENDPOINT_URL` (e.g. `http://minio:9000`).
+  selected mode dispatches, so a file is never processed twice. For bundled SeaweedFS,
+  set `AWS_ENDPOINT_URL=http://seaweedfs:8333` for backend calls and
+  `AWS_PUBLIC_ENDPOINT_URL=http://localhost:8333` for URLs used by the browser.
 </Info>
+
+<Warning>
+  Set `AWS_SSE_ALGORITHM=AES256` only after confirming that the object-store gateway has
+  SSE-S3 key management configured. It is intentionally disabled when unset so an
+  upgrade cannot break existing S3-compatible deployments. The bundled SeaweedFS service
+  supplies local SSE key configuration; keep `SEAWEEDFS_SSE_KEY` and
+  `SEAWEEDFS_SSE_KEK_PASSPHRASE` stable if its volume is persistent.
+</Warning>
+
+For a complete local setup, including environment variables, startup checks, object
+inspection, and an optional MinIO alternative, see the
+[local object-storage deployment guide](/dev-guides/raw-payload-storage#local-deployment-with-seaweedfs).
 
 ## Complete Example Workflow
 

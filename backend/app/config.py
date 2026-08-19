@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote
 
+from cryptography.fernet import Fernet
+
 if TYPE_CHECKING:
     from app.schemas.enums import ProviderName
 
@@ -234,17 +236,48 @@ class Settings(BaseSettings):
     aws_region: str = "eu-north-1"
     # for topic ARN verification from SNS notification (signature is verified regardless)
     aws_sns_topic_arn: SecretStr | None = None
-    # Optional custom endpoint for S3-compatible object storage (e.g. MinIO). Also read
-    # natively by boto3 from AWS_ENDPOINT_URL; declaring it here lets the Apple XML flow
-    # force path-style addressing + SigV4 so presigned/multipart URLs work against MinIO.
+    # Optional custom endpoint for S3-compatible object storage (e.g. SeaweedFS/MinIO).
+    # The shared client factory forces path-style addressing + SigV4 for custom endpoints.
     aws_endpoint_url: str | None = None
+    # Browser-facing endpoint for presigned uploads. The backend reaches storage at
+    # aws_endpoint_url (e.g. a Docker service name), but the *browser* uploads directly to
+    # the presigned URL and may not resolve that hostname — set this to what the browser
+    # can reach (e.g. http://localhost:8333). Only presigned POST + multipart part URLs use
+    # it. Every backend-side S3 call uses aws_endpoint_url. Unset -> falls back to it.
+    aws_public_endpoint_url: str | None = None
     # How a completed S3/MinIO XML upload triggers processing:
     #   "client" — the frontend calls the /complete endpoint (works for S3 and MinIO alike)
     #   "sns"    — an S3 bucket event fans out through SNS to /sns/notification (AWS only)
     # Only the selected mode dispatches the import task, so processing never runs twice.
     apple_xml_upload_completion_mode: Literal["client", "sns"] = "client"
+    # Incomplete Apple XML multipart uploads are cleaned up by an hourly Celery task.
+    # Keep this longer than the default 24-hour part-URL lifetime so active uploads are
+    # never aborted while their URLs are still valid.
+    apple_xml_multipart_max_age_hours: int = Field(48, ge=25)
+
+    # Optional server-side encryption (SSE) enforced by the app on every new object.
+    # Explicit opt-in keeps upgrades compatible with S3-compatible stores that do not
+    # support these headers. Applied to multipart-create, presigned POST and put_object.
+    #   "AES256"  — SSE-S3, storage-managed key (works on AWS S3 and SeaweedFS)
+    #   "aws:kms" — SSE-KMS, set aws_sse_kms_key_id
+    #   ""/none   — disable app-enforced SSE (e.g. stock MinIO with no KMS — configure
+    #               bucket-default encryption on the storage side instead)
+    aws_sse_algorithm: Literal["AES256", "aws:kms"] | None = None
+    aws_sse_kms_key_id: str | None = None
 
     xml_chunk_size: int = 50_000
+
+    # APPLICATION-LEVEL ENCRYPTION (health data at rest)
+    # Fernet key(s) used to encrypt backend-written payloads (raw payloads, FIT files)
+    # before they reach object storage, so the store only ever holds ciphertext this app
+    # can decrypt — an application-held key on top of (and independent of) storage SSE.
+
+    # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+    # One key, or a comma-separated list for rotation (first key encrypts; any decrypts).
+    # Unset -> those payloads are stored unencrypted (SSE still applies if configured).
+    # Deliberately separate from MASTER_KEY (which only decrypts config secrets).
+    data_encryption_key: SecretStr | None = None
 
     # RAW PAYLOAD STORAGE
     raw_payload_storage: str = "disabled"  # disabled | log | s3
@@ -323,6 +356,38 @@ class Settings(BaseSettings):
         if isinstance(v, str) and not v.strip():
             return None
         return parse_duration(str(v))  # "2d" / "20h" / "1d12h" → timedelta (fail fast at startup)
+
+    @field_validator("aws_sse_algorithm", mode="before")
+    @classmethod
+    def _parse_aws_sse_algorithm(cls, v: Any) -> Literal["AES256", "aws:kms"] | None:
+        if v is None:
+            return None
+        value = str(v).strip()
+        if not value or value.lower() == "none":
+            return None
+        if value.upper() == "AES256":
+            return "AES256"
+        if value.lower() == "aws:kms":
+            return "aws:kms"
+        raise ValueError("AWS_SSE_ALGORITHM must be AES256, aws:kms, or empty")
+
+    @field_validator("data_encryption_key", mode="after")
+    @classmethod
+    def _validate_data_encryption_key(cls, v: SecretStr | None) -> SecretStr | None:
+        if v is None:
+            return None
+        value = v.get_secret_value().strip()
+        if not value:
+            return None
+        try:
+            keys = [key.strip() for key in value.split(",")]
+            if any(not key for key in keys):
+                raise ValueError("empty key")
+            for key in keys:
+                Fernet(key.encode("utf-8"))
+        except (TypeError, ValueError) as e:
+            raise ValueError("DATA_ENCRYPTION_KEY must contain valid comma-separated Fernet keys") from e
+        return v
 
     def oauth_redirect_uri(self, provider: ProviderName) -> str:
         """Build OAuth redirect URI for a provider.

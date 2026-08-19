@@ -18,6 +18,7 @@ from app.services.providers.garmin.backfill_state import (
 )
 
 from .archival_task import run_daily_archival
+from .cleanup_multipart_uploads_task import cleanup_stale_apple_xml_multipart_uploads
 from .emit_webhook_event_task import emit_webhook_event
 from .fill_missing_resilience_scores_task import fill_missing_resilience_scores
 from .fill_missing_sleep_scores_task import fill_missing_sleep_scores
@@ -36,7 +37,7 @@ from .garmin.backfill_trigger import (
 )
 from .garmin.gc_task import gc_stuck_backfills
 from .periodic_sync_task import sync_all_users
-from .process_aws_upload_task import process_aws_upload
+from .process_aws_upload_task import complete_and_process_aws_upload, process_aws_upload
 from .process_sdk_upload_task import process_sdk_upload
 from .process_xml_upload_task import process_xml_upload
 from .refresh_dashboard_stats_task import refresh_dashboard_total_data_points
@@ -62,6 +63,9 @@ __all__ = [
     "gc_stuck_backfills",
     # Archival
     "run_daily_archival",
+    # Apple XML multipart uploads
+    "cleanup_stale_apple_xml_multipart_uploads",
+    "complete_and_process_aws_upload",
     # Sleep score calculation
     "fill_missing_sleep_scores",
     # Resilience score calculation

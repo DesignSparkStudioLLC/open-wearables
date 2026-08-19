@@ -82,6 +82,7 @@ Get Open Wearables running locally and start integrating wearable device data.
     This will start all required services:
     - PostgreSQL database
     - Redis
+    - SeaweedFS S3-compatible object storage
     - FastAPI backend
     - Celery worker
     - Celery beat (scheduler)
@@ -91,8 +92,15 @@ Get Open Wearables running locally and start integrating wearable device data.
     - 🌐 **API**: http://localhost:8000
     - 📚 **Swagger UI**: http://localhost:8000/docs
     - 🔐 **Developer Panel**: http://localhost:3000
+    - 🗄️ **SeaweedFS S3 API**: http://localhost:8333
+    - 📁 **SeaweedFS Filer UI**: http://localhost:8888
     
     <Tip>Use `docker compose logs -f` to view logs from all services.</Tip>
+
+    <Tip>
+      To store raw provider payloads, FIT files, or Apple Health XML uploads locally,
+      follow the [local SeaweedFS deployment guide](/dev-guides/raw-payload-storage#local-deployment-with-seaweedfs).
+    </Tip>
   </Accordion>
   <Accordion icon="rectangle-terminal" title="Local development setup">
     For local development without Docker:

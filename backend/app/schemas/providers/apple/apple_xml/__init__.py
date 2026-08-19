@@ -11,7 +11,6 @@ from .aws import (
 )
 from .multipart import (
     DEFAULT_PART_SIZE,
-    MAX_OBJECT_SIZE,
     MAX_PART_SIZE,
     MAX_PARTS,
     MIN_PART_SIZE,
@@ -54,7 +53,6 @@ __all__ = [
     "MAX_PART_SIZE",
     "MAX_PARTS",
     "DEFAULT_PART_SIZE",
-    "MAX_OBJECT_SIZE",
     "recommended_part_size",
     # ParseStats
     "XMLParseStats",

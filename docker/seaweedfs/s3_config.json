@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "open-wearables-dev",
+      "credentials": [
+        {
+          "accessKey": "open-wearables",
+          "secretKey": "open-wearables-secret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

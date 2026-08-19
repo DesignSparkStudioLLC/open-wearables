@@ -35,7 +35,12 @@ RAW_PAYLOAD_MAX_SIZE_BYTES=10485760
 # S3-specific settings (only needed when using "s3" backend)
 RAW_PAYLOAD_S3_BUCKET=my-raw-payloads        # Falls back to AWS_BUCKET_NAME if not set
 RAW_PAYLOAD_S3_PREFIX=raw-payloads            # S3 key prefix (default: "raw-payloads")
-# RAW_PAYLOAD_S3_ENDPOINT_URL=              # Optional: custom endpoint for S3-compatible providers
+AWS_ENDPOINT_URL=http://seaweedfs:8333        # Shared S3-compatible endpoint
+# RAW_PAYLOAD_S3_ENDPOINT_URL=                # Optional override for raw payloads only
+
+# Encryption at rest
+AWS_SSE_ALGORITHM=AES256                      # Empty disables app-enforced S3 SSE
+# DATA_ENCRYPTION_KEY=                        # Optional Fernet key for app-level encryption
 ```
 
 <Warning>
@@ -76,7 +81,7 @@ Example output:
 
 ### S3
 
-Uploads each payload as a JSON file to an S3 bucket (or any S3-compatible object store like MinIO or Railway Object Storage).
+Uploads each payload as an object to AWS S3 or an S3-compatible store such as SeaweedFS, MinIO, or Railway Object Storage.
 
 ```bash
 RAW_PAYLOAD_STORAGE=s3
@@ -115,6 +120,44 @@ Each object includes metadata for filtering and querying:
 | `timestamp` | ISO 8601 UTC timestamp |
 | `user_id` | User identifier (if available) |
 | `trace_id` | Request trace/batch ID (if available) |
+| `encryption` | `fernet` when application-level encryption is enabled |
+| `original_content_type` | Original media type for an encrypted payload |
+
+When `DATA_ENCRYPTION_KEY` is set, the object body is Fernet ciphertext and its S3
+content type is `application/octet-stream`. The replay script decrypts marked objects
+before validating and sending their JSON. Keep old keys after rotation by listing the
+new key first followed by previous keys, separated by commas.
+
+## Upgrading an existing deployment
+
+No database migration or mandatory object rewrite is required when enabling encryption.
+Existing objects remain readable alongside newly encrypted objects:
+
+- Objects without `encryption=fernet` metadata are treated as legacy plaintext.
+- New raw payloads and FIT files are encrypted only after `DATA_ENCRYPTION_KEY` is set.
+- S3 server-side encryption is transparent when reading objects, whether an object was
+  written before or after SSE was enabled.
+
+`AWS_SSE_ALGORITHM` is intentionally disabled when unset. This prevents an application
+upgrade from suddenly sending unsupported SSE headers to an existing MinIO, SeaweedFS,
+or other S3-compatible deployment. Verify the storage backend first, then explicitly set
+`AWS_SSE_ALGORITHM=AES256` or `aws:kms` and deploy the API and workers with the same
+configuration.
+
+<Warning>
+  Back up `DATA_ENCRYPTION_KEY` and any storage-managed encryption keys before enabling
+  encryption. Losing a key makes the objects encrypted with it unreadable. For Fernet
+  rotation, put the new key first and retain all old keys in the comma-separated value
+  until every old object has been re-encrypted or expired.
+</Warning>
+
+Historical plaintext does require a separate, operator-controlled backfill if an
+organization's policy requires **all previously stored objects** to be encrypted. Do not
+run that automatically during application startup: large buckets, versioning, retention
+rules, and provider-specific copy semantics make an in-place rewrite potentially costly
+or destructive. Use the storage provider's audited copy/re-encryption process for SSE;
+application-level Fernet backfill should be performed only after a bucket backup and a
+dry-run inventory of unmarked raw/FIT objects.
 
 ## Supported Ingestion Points
 
@@ -134,7 +177,235 @@ Raw payloads storage is designed to never break your data ingestion pipeline:
 - **Missing S3 bucket** - If the S3 backend is configured but no bucket is available, it falls back to `disabled` with an error log.
 - **S3 client failure** - If the S3 client cannot be created (e.g., missing `boto3` or invalid credentials), it falls back to `disabled`.
 
-## Example Setup
+## Local deployment with SeaweedFS
+
+The repository includes a single-node SeaweedFS service for local development. It
+starts with the normal Docker Compose stack, persists objects in the
+`seaweedfs_data` volume, and creates the `open-wearables` bucket automatically.
+No separate SeaweedFS installation or AWS account is required.
+
+<Steps>
+  <Step title="Create the environment files">
+    From the repository root, create the local configuration files if they do not
+    already exist:
+
+    ```bash
+    test -f backend/config/.env || cp backend/config/.env.example backend/config/.env
+    test -f frontend/.env || cp frontend/.env.example frontend/.env
+    ```
+
+    If you already have either file, keep it and edit the existing copy instead.
+  </Step>
+
+  <Step title="Point Open Wearables at SeaweedFS">
+    Add or update this block in `backend/config/.env`:
+
+    ```bash
+    # Shared object-store configuration
+    AWS_BUCKET_NAME=open-wearables
+    AWS_ENDPOINT_URL=http://seaweedfs:8333
+    AWS_PUBLIC_ENDPOINT_URL=http://localhost:8333
+    AWS_ACCESS_KEY_ID=open-wearables
+    AWS_SECRET_ACCESS_KEY=open-wearables-secret
+    AWS_REGION=eu-north-1
+    AWS_SSE_ALGORITHM=AES256
+
+    # Self-hosted stores do not publish AWS SNS events.
+    APPLE_XML_UPLOAD_COMPLETION_MODE=client
+
+    # Enable only the storage features you need.
+    RAW_PAYLOAD_STORAGE=s3
+    RAW_PAYLOAD_S3_BUCKET=open-wearables
+    RAW_PAYLOAD_S3_PREFIX=raw-payloads
+    RAW_PAYLOAD_S3_ENDPOINT_URL=http://seaweedfs:8333
+    # STORE_FIT_FILES=true
+    ```
+
+    `AWS_ENDPOINT_URL` is used inside the Docker network. Presigned XML uploads run
+    in the browser, so `AWS_PUBLIC_ENDPOINT_URL` must use the host-mapped port.
+
+    <Tip>
+      To encrypt raw payload and FIT bytes before they reach the object store, generate
+      a Fernet key with the command below and assign its output to
+      `DATA_ENCRYPTION_KEY` in `backend/config/.env`:
+
+      ```bash
+      cd backend
+      uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      ```
+    </Tip>
+  </Step>
+
+  <Step title="Keep encryption keys stable">
+    The Compose file supplies development defaults for SeaweedFS server-side
+    encryption. They are enough for disposable local data. If you intend to keep the
+    volume, set your own stable values in a `.env` file at the repository root before
+    the first upload:
+
+    ```bash
+    SEAWEEDFS_SSE_KEY=replace-with-a-long-random-secret
+    SEAWEEDFS_SSE_KEK_PASSPHRASE=replace-with-another-long-random-secret
+    ```
+
+    <Warning>
+      Do not change or lose these values while retaining the `seaweedfs_data` volume.
+      SeaweedFS needs the same key material to read existing SSE-encrypted objects.
+      Do not use the documented development credentials or placeholder secrets in a
+      production deployment.
+    </Warning>
+  </Step>
+
+  <Step title="Start the stack">
+    Start every service, including SeaweedFS and the one-time bucket initializer:
+
+    ```bash
+    docker compose up -d
+    ```
+
+    To start only the object store for backend development outside Docker, run:
+
+    ```bash
+    docker compose up -d seaweedfs seaweedfs-init
+    ```
+
+    In that case, use `http://localhost:8333` for `AWS_ENDPOINT_URL`,
+    `AWS_PUBLIC_ENDPOINT_URL`, and `RAW_PAYLOAD_S3_ENDPOINT_URL` because the backend is
+    running on the host rather than in the Compose network.
+  </Step>
+
+  <Step title="Verify the object store">
+    Check the long-running service and the completed initializer:
+
+    ```bash
+    docker compose ps -a seaweedfs seaweedfs-init
+    docker compose logs seaweedfs-init
+    ```
+
+    `seaweedfs` should be running, `seaweedfs-init` should have exited with status `0`,
+    and its log should contain:
+
+    ```text
+    SeaweedFS bucket 'open-wearables' ready
+    ```
+
+    You can also query the S3 API using the AWS CLI image already declared by Compose:
+
+    ```bash
+    docker compose run --rm --entrypoint aws seaweedfs-init \
+      --endpoint-url http://seaweedfs:8333 \
+      s3api list-buckets \
+      --query 'Buckets[].Name' \
+      --output text
+    ```
+
+    Expected output:
+
+    ```text
+    open-wearables
+    ```
+  </Step>
+
+  <Step title="Inspect stored objects">
+    After sending a provider payload, list the bucket contents:
+
+    ```bash
+    docker compose run --rm --entrypoint aws seaweedfs-init \
+      --endpoint-url http://seaweedfs:8333 \
+      s3 ls s3://open-wearables/ --recursive
+    ```
+
+    Follow backend storage logs with:
+
+    ```bash
+    docker compose logs -f app | grep raw_payload
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The default ports are `8333` for the S3 API and `8888` for the SeaweedFS filer UI.
+  To change the host-side S3 port, set `SEAWEEDFS_S3_PORT` in the repository-root
+  `.env` and update `AWS_PUBLIC_ENDPOINT_URL` to match. The internal endpoint remains
+  `http://seaweedfs:8333`.
+</Note>
+
+`docker compose down` stops the stack but preserves stored objects. Running
+`docker compose down -v` also deletes the SeaweedFS, PostgreSQL, and Redis volumes and
+cannot be undone.
+
+## Alternative local MinIO deployment
+
+MinIO is not an active service in the repository's Compose file, but the application
+remains compatible with its S3 API. Use the bundled SeaweedFS service for the shortest
+setup. To test specifically against MinIO, start the normal stack first and then run a
+MinIO container on the Compose network:
+
+```bash
+docker run -d \
+  --name minio-open-wearables \
+  --restart unless-stopped \
+  --network open-wearables_default \
+  --network-alias minio \
+  -p 9000:9000 \
+  -p 9001:9001 \
+  -e MINIO_ROOT_USER=minioadmin \
+  -e MINIO_ROOT_PASSWORD=minioadmin \
+  -e MINIO_API_CORS_ALLOW_ORIGIN=http://localhost:3000 \
+  -e MINIO_KMS_SECRET_KEY=open-wearables-local:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
+  -v minio_open_wearables_data:/data \
+  minio/minio:RELEASE.2025-09-07T16-13-09Z \
+  server /data --console-address :9001
+```
+
+Create the bucket with the AWS CLI container:
+
+```bash
+docker run --rm \
+  --network open-wearables_default \
+  -e AWS_ACCESS_KEY_ID=minioadmin \
+  -e AWS_SECRET_ACCESS_KEY=minioadmin \
+  -e AWS_DEFAULT_REGION=eu-north-1 \
+  amazon/aws-cli:2.36.25 \
+  --endpoint-url http://minio:9000 \
+  s3api create-bucket --bucket open-wearables
+```
+
+Then replace the SeaweedFS values in `backend/config/.env`:
+
+```bash
+AWS_ENDPOINT_URL=http://minio:9000
+AWS_PUBLIC_ENDPOINT_URL=http://localhost:9000
+AWS_ACCESS_KEY_ID=minioadmin
+AWS_SECRET_ACCESS_KEY=minioadmin
+AWS_SSE_ALGORITHM=AES256
+APPLE_XML_UPLOAD_COMPLETION_MODE=client
+RAW_PAYLOAD_S3_BUCKET=open-wearables
+RAW_PAYLOAD_S3_ENDPOINT_URL=http://minio:9000
+```
+
+Restart the backend processes after changing the environment:
+
+```bash
+docker compose up -d --force-recreate app celery-worker
+```
+
+The MinIO console is available at [http://localhost:9001](http://localhost:9001) using
+`minioadmin` / `minioadmin`.
+
+<Warning>
+  This MinIO command uses public development credentials and a public static KMS key so
+  that local `AES256` requests work. It is only for testing. Use unique credentials,
+  TLS, and a supported key manager for production; see MinIO's
+  [server-side encryption documentation](https://docs.min.io/aistor/installation/linux/server-side-encryption/).
+  If your Compose project name is not `open-wearables`, replace
+  `open-wearables_default` with its actual network name from `docker network ls`.
+</Warning>
+
+Because this optional container is not managed by Compose, `docker compose down` does
+not stop it. Use `docker stop minio-open-wearables`; start it again later with
+`docker start minio-open-wearables`.
+
+## Other example setups
 
 <Tabs>
   <Tab title="Development (Log)">
@@ -145,48 +416,8 @@ Raw payloads storage is designed to never break your data ingestion pipeline:
     Then inspect payloads in Docker logs:
 
     ```bash
-    docker compose logs -f backend | grep raw_payload
+    docker compose logs -f app | grep raw_payload
     ```
-  </Tab>
-  <Tab title="Development (MinIO)">
-    [MinIO](https://min.io/) is an S3-compatible object store you can run locally. This lets you browse stored payloads via a web UI without needing an AWS account.
-
-    **1. Start MinIO** (on the same Docker network as the app):
-
-    ```bash
-    docker run -d \
-      --name minio-open-wearables \
-      --hostname minio \
-      --network open-wearables_default \
-      -p 9002:9000 -p 9003:9001 \
-      -e MINIO_ROOT_USER=minioadmin \
-      -e MINIO_ROOT_PASSWORD=minioadmin \
-      minio/minio server /data --console-address ":9001"
-    ```
-
-    <Warning>
-      Use `--hostname minio` to register a clean DNS name in the Docker network. Boto3 rejects hostnames with special characters (e.g. double underscores), so container names like `minio__open-wearables` won't work as endpoint URLs.
-    </Warning>
-
-    **2. Create the bucket** - open the MinIO Console at [http://localhost:9003](http://localhost:9003) (login `minioadmin` / `minioadmin`) and create a bucket called `raw-payloads`, or use the CLI:
-
-    ```bash
-    docker exec minio-open-wearables mc alias set local http://localhost:9000 minioadmin minioadmin
-    docker exec minio-open-wearables mc mb local/raw-payloads
-    ```
-
-    **3. Configure env vars** in `backend/config/.env`:
-
-    ```bash
-    RAW_PAYLOAD_STORAGE=s3
-    RAW_PAYLOAD_S3_BUCKET=raw-payloads
-    RAW_PAYLOAD_S3_ENDPOINT_URL=http://minio:9000
-    AWS_ACCESS_KEY_ID=minioadmin
-    AWS_SECRET_ACCESS_KEY=minioadmin
-    AWS_REGION=us-east-1
-    ```
-
-    Payloads will appear in the MinIO Console under the `raw-payloads` bucket.
   </Tab>
   <Tab title="Production (S3)">
     ```bash
@@ -211,7 +442,7 @@ Use the `replay_raw_payloads.py` script to re-send S3-stored payloads through th
 cd backend
 set -a && source config/.env && set +a
 
-uv run --with boto3,httpx python scripts/replay_raw_payloads.py \
+uv run --with boto3,httpx,cryptography python scripts/replay_raw_payloads.py \
     --user-id <source-user-uuid> \
     --api-url http://localhost:8000 \
     --api-key sk-...
@@ -224,7 +455,7 @@ The script reads AWS/S3 credentials from environment variables automatically.
 Narrow down which payloads to replay:
 
 ```bash
-uv run --with boto3,httpx python scripts/replay_raw_payloads.py \
+uv run --with boto3,httpx,cryptography python scripts/replay_raw_payloads.py \
     --user-id <uuid> \
     --provider apple \
     --source sdk \
@@ -238,7 +469,7 @@ uv run --with boto3,httpx python scripts/replay_raw_payloads.py \
 Use `--target-user-id` to send one user's payloads to a different user account:
 
 ```bash
-uv run --with boto3,httpx python scripts/replay_raw_payloads.py \
+uv run --with boto3,httpx,cryptography python scripts/replay_raw_payloads.py \
     --user-id <source-uuid> \
     --target-user-id <destination-uuid> \
     --api-url https://api.openwearables.io \
@@ -250,7 +481,7 @@ uv run --with boto3,httpx python scripts/replay_raw_payloads.py \
 Preview which payloads would be sent without making any requests:
 
 ```bash
-uv run --with boto3,httpx python scripts/replay_raw_payloads.py \
+uv run --with boto3,httpx,cryptography python scripts/replay_raw_payloads.py \
     --user-id <uuid> \
     --dry-run
 ```
@@ -265,7 +496,7 @@ uv run --with boto3,httpx python scripts/replay_raw_payloads.py \
 | `--api-key` | `OPEN_WEARABLES_API_KEY` env var | API key for authentication |
 | `--s3-bucket` | `RAW_PAYLOAD_S3_BUCKET` or `AWS_BUCKET_NAME` env var | S3 bucket name |
 | `--s3-prefix` | `raw-payloads` | S3 key prefix |
-| `--s3-endpoint-url` | `RAW_PAYLOAD_S3_ENDPOINT_URL` env var | Custom S3 endpoint for compatible providers |
+| `--s3-endpoint-url` | `RAW_PAYLOAD_S3_ENDPOINT_URL` or `AWS_ENDPOINT_URL` env var | Custom S3 endpoint for compatible providers |
 | `--aws-region` | `AWS_REGION` env var or `eu-north-1` | AWS region |
 | `--aws-access-key-id` | `AWS_ACCESS_KEY_ID` env var | AWS access key ID |
 | `--aws-secret-access-key` | `AWS_SECRET_ACCESS_KEY` env var | AWS secret access key |

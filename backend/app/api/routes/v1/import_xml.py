@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile, status
 from pydantic import ValidationError
 
 from app.config import settings
-from app.integrations.celery.tasks.process_aws_upload_task import process_aws_upload
+from app.integrations.celery.tasks.process_aws_upload_task import complete_and_process_aws_upload
 from app.integrations.celery.tasks.process_xml_upload_task import process_xml_upload
 from app.schemas.providers.apple.apple_xml import (
     MultipartAbortRequest,
@@ -21,7 +21,7 @@ from app.schemas.providers.apple.apple_xml import (
 )
 from app.schemas.responses.upload import UploadDataResponse
 from app.services import ApiKeyDep
-from app.services.apple.apple_xml.aws_service import AWS_BUCKET_NAME
+from app.services.apple.apple_xml.aws_service import require_bucket_name
 from app.services.apple.apple_xml.multipart_upload_service import multipart_upload_service
 from app.services.apple.apple_xml.presigned_url_service import presigned_url_service
 from app.services.apple.apple_xml.sns_service import sns_service
@@ -46,7 +46,7 @@ def create_multipart_upload(
     _api_key: ApiKeyDep,
 ) -> MultipartCreateResponse:
     """Start a multipart upload for a (potentially very large) XML file to S3/MinIO."""
-    return multipart_upload_service.create(
+    return multipart_upload_service.create_upload(
         user_id=user_id,
         filename=request.filename,
         content_type=request.content_type,
@@ -61,7 +61,7 @@ def sign_multipart_parts(
     _api_key: ApiKeyDep,
 ) -> MultipartSignResponse:
     """Presign upload URLs for a batch of parts of an in-progress multipart upload."""
-    return multipart_upload_service.sign_parts(
+    return multipart_upload_service.sign_upload_parts(
         user_id=user_id,
         key=request.key,
         upload_id=request.upload_id,
@@ -76,32 +76,54 @@ def complete_multipart_upload(
     request: MultipartCompleteRequest,
     _api_key: ApiKeyDep,
 ) -> MultipartCompleteResponse:
-    """Finalize a multipart upload and, in client-driven mode, dispatch processing.
+    """Finalize an SNS upload, or queue client-driven finalization and processing.
 
     When ``APPLE_XML_UPLOAD_COMPLETION_MODE`` is ``"sns"`` the import task is instead
     triggered by the S3 bucket event, so this endpoint only finalizes the object.
     """
-    key = multipart_upload_service.complete(
+    if settings.apple_xml_upload_completion_mode == "client":
+        bucket_name = multipart_upload_service.validate_completion_request(
+            user_id,
+            request.key,
+            request.upload_id,
+            request.parts,
+        )
+        try:
+            task = complete_and_process_aws_upload.delay(
+                bucket_name=bucket_name,
+                object_key=request.key,
+                upload_id=request.upload_id,
+                parts=[part.model_dump() for part in request.parts],
+                user_id=user_id,
+            )
+        except Exception as e:
+            # The object has deliberately not been finalized yet, so callers can safely
+            # retry this request or abort the still-incomplete upload.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Unable to queue upload processing; the multipart upload remains incomplete",
+            ) from e
+
+        return MultipartCompleteResponse(
+            status="processing",
+            key=request.key,
+            bucket=bucket_name,
+            task_id=task.id,
+        )
+
+    key = multipart_upload_service.complete_upload(
         user_id=user_id,
         key=request.key,
         upload_id=request.upload_id,
         parts=request.parts,
     )
-
-    task_id: str | None = None
-    if settings.apple_xml_upload_completion_mode == "client":
-        task = process_aws_upload.delay(
-            bucket_name=AWS_BUCKET_NAME,
-            object_key=key,
-            user_id=user_id,
-        )
-        task_id = task.id
+    bucket_name = require_bucket_name()
 
     return MultipartCompleteResponse(
-        status="processing" if task_id else "uploaded",
+        status="uploaded",
         key=key,
-        bucket=AWS_BUCKET_NAME,  # ty:ignore[invalid-argument-type]
-        task_id=task_id,
+        bucket=bucket_name,
+        task_id=None,
     )
 
 
@@ -112,7 +134,7 @@ def abort_multipart_upload(
     _api_key: ApiKeyDep,
 ) -> dict[str, str]:
     """Abort an incomplete multipart upload and discard its parts."""
-    multipart_upload_service.abort(user_id=user_id, key=request.key, upload_id=request.upload_id)
+    multipart_upload_service.abort_upload(user_id=user_id, key=request.key, upload_id=request.upload_id)
     return {"status": "aborted", "key": request.key}
 
 

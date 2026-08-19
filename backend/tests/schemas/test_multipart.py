@@ -7,11 +7,17 @@ from pydantic import ValidationError
 
 from app.schemas.providers.apple.apple_xml import (
     DEFAULT_PART_SIZE,
+    MAX_FILE_SIZE,
     MAX_PART_SIZE,
     MAX_PARTS,
     MIN_PART_SIZE,
+    MultipartCreateRequest,
     MultipartSignRequest,
     recommended_part_size,
+)
+from app.schemas.providers.apple.apple_xml.multipart import (
+    DEFAULT_EXPIRATION_SECONDS,
+    MAX_EXPIRATION_SECONDS,
 )
 
 
@@ -38,11 +44,48 @@ class TestRecommendedPartSize:
         assert recommended_part_size(1) >= MIN_PART_SIZE
 
     def test_part_size_never_above_maximum(self) -> None:
-        # 5 TiB, the max object size
+        # Keep the generic sizing helper safe even beyond the product upload cap.
         assert recommended_part_size(5 * 1024 * 1024 * 1024 * 1024) <= MAX_PART_SIZE
+
+    def test_default_needs_at_most_52_parts_at_product_limit(self) -> None:
+        assert ceil(MAX_FILE_SIZE / DEFAULT_PART_SIZE) == 52
+
+
+class TestMultipartCreateRequest:
+    def test_accepts_product_file_size_limit(self) -> None:
+        request = MultipartCreateRequest(filename="export.xml", file_size=MAX_FILE_SIZE)
+        assert request.file_size == MAX_FILE_SIZE
+
+    def test_rejects_file_above_product_limit(self) -> None:
+        with pytest.raises(ValidationError):
+            MultipartCreateRequest(filename="export.xml", file_size=MAX_FILE_SIZE + 1)
 
 
 class TestMultipartSignRequest:
+    def test_default_expiration_supports_slow_large_uploads(self) -> None:
+        request = MultipartSignRequest(key="u/raw/x.xml", upload_id="up", part_numbers=[1])
+
+        assert request.expiration_seconds == 24 * 60 * 60
+
+    def test_accepts_maximum_expiration(self) -> None:
+        request = MultipartSignRequest(
+            key="u/raw/x.xml",
+            upload_id="up",
+            part_numbers=[1],
+            expiration_seconds=MAX_EXPIRATION_SECONDS,
+        )
+
+        assert request.expiration_seconds == 24 * 60 * 60
+
+    def test_rejects_expiration_above_application_maximum(self) -> None:
+        with pytest.raises(ValidationError):
+            MultipartSignRequest(
+                key="u/raw/x.xml",
+                upload_id="up",
+                part_numbers=[1],
+                expiration_seconds=MAX_EXPIRATION_SECONDS + 1,
+            )
+
     def test_accepts_valid_part_numbers(self) -> None:
         req = MultipartSignRequest(key="u/raw/x.xml", upload_id="up", part_numbers=[1, 2, MAX_PARTS])
         assert req.part_numbers == [1, 2, MAX_PARTS]
@@ -55,3 +98,6 @@ class TestMultipartSignRequest:
     def test_rejects_empty_part_numbers(self) -> None:
         with pytest.raises(ValidationError):
             MultipartSignRequest(key="u/raw/x.xml", upload_id="up", part_numbers=[])
+
+    def test_constant_matches_schema_default(self) -> None:
+        assert MultipartSignRequest.model_fields["expiration_seconds"].default == DEFAULT_EXPIRATION_SECONDS

@@ -4,7 +4,7 @@ MIN_EXPIRATION_SECONDS = 60  # 1 minute
 MAX_EXPIRATION_SECONDS = 3600  # 1 hour
 DEFAULT_EXPIRATION_SECONDS = 300  # 5 minutes
 MIN_FILE_SIZE = 1024  # 1KB
-MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5GiB (S3 presigned POST ceiling for a single upload)
+MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5 GiB Open Wearables Apple XML upload cap
 DEFAULT_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 

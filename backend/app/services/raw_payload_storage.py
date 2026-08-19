@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from app.services.s3_client import create_s3_client, sse_put_kwargs
+from app.utils import crypto
 from app.utils.structured_logging import json_serial, log_structured
 
 logger = logging.getLogger(__name__)
@@ -65,8 +67,6 @@ def configure(
 
 def _create_s3_client(endpoint_url: str | None = None) -> Any:
     """Create a boto3 S3 client using app AWS settings (shared factory)."""
-    from app.services.s3_client import create_s3_client
-
     return create_s3_client(endpoint_url)
 
 
@@ -167,12 +167,24 @@ def _store_to_s3(
         metadata["trace_id"] = trace_id
 
     try:
+        # Application-level encryption: the backend holds the bytes here, so encrypt before
+        # upload and the store only ever sees ciphertext. Content type flips to octet-stream
+        # and the original type is preserved in metadata for replay tooling.
+        body = payload_str.encode("utf-8")
+        content_type = "application/json"
+        if crypto.is_enabled():
+            body = crypto.encrypt(body)
+            content_type = "application/octet-stream"
+            metadata["encryption"] = crypto.ENCRYPTION_SCHEME
+            metadata["original_content_type"] = "application/json"
+
         _s3_client.put_object(
             Bucket=_s3_bucket,
             Key=key,
-            Body=payload_str.encode("utf-8"),
-            ContentType="application/json",
+            Body=body,
+            ContentType=content_type,
             Metadata=metadata,
+            **sse_put_kwargs(),
         )
         logger.debug(
             "Stored raw payload to S3: s3://%s/%s (%d bytes)",
@@ -204,13 +216,21 @@ def store_fit_file(
 
     now = datetime.now(UTC)
     key = f"fit-files/{provider}/{now.strftime('%Y-%m-%d')}/{user_id}/{activity_id}.fit"
+    metadata = {"provider": provider, "user_id": user_id, "activity_id": str(activity_id)}
+
     try:
+        body = fit_bytes
+        if crypto.is_enabled():
+            body = crypto.encrypt(body)
+            metadata["encryption"] = crypto.ENCRYPTION_SCHEME
+
         _s3_client.put_object(
             Bucket=_s3_bucket,
             Key=key,
-            Body=fit_bytes,
+            Body=body,
             ContentType="application/octet-stream",
-            Metadata={"provider": provider, "user_id": user_id, "activity_id": str(activity_id)},
+            Metadata=metadata,
+            **sse_put_kwargs(),
         )
         logger.debug("Stored FIT file to S3: s3://%s/%s (%d bytes)", _s3_bucket, key, len(fit_bytes))
     except Exception:
