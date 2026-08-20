@@ -1,0 +1,60 @@
+# Local observability stack for backend (FastAPI) + Celery.
+#
+# Run alongside the main stack:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+# Then open Grafana at http://localhost:3001 (admin / admin) — the "Open Wearables"
+# dashboard is provisioned automatically. Prometheus UI at http://localhost:9090.
+#
+# Services here join the main compose project's default network, so they reach
+# `app`, `flower`, and `redis` by service name.
+services:
+  prometheus:
+    container_name: prometheus__open-wearables
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+
+  redis-exporter:
+    container_name: redis-exporter__open-wearables
+    image: oliver006/redis_exporter:v1.67.0
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+      # Report length of each Celery queue (Redis list) as redis_key_size, and the
+      # unacked hash — this is the queue-depth signal behind the OOM incident.
+      REDIS_EXPORTER_CHECK_KEYS: "default,sdk_sync,garmin_sync,webhook_sync,unacked"
+    ports:
+      - "${REDIS_EXPORTER_PORT:-9121}:9121"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  grafana:
+    container_name: grafana__open-wearables
+    image: grafana/grafana:11.5.0
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-admin}"
+      GF_USERS_DEFAULT_THEME: "light"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:

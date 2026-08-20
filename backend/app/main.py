@@ -10,6 +10,7 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from prometheus_fastapi_instrumentator import Instrumentator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import head_router
@@ -67,6 +68,10 @@ raw_payload_storage.configure(
 
 add_cors_middleware(api)
 add_access_log_middleware(api)
+
+# Prometheus metrics at /metrics (request rate/latency/status per handler). Scraped by
+# the local observability stack (docker-compose.observability.yml). Harmless when unscraped.
+Instrumentator().instrument(api).expose(api, endpoint="/metrics", include_in_schema=False)
 
 # Mount static files for provider icons
 static_dir = Path(__file__).parent / "static"

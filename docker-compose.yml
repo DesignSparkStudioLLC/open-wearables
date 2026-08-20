@@ -147,11 +147,42 @@ services:
           redis-cli SHUTDOWN NOSAVE
           wait "$$RPID" 2>/dev/null
         fi
-        exec redis-server --appendonly yes --appendfsync everysec
+        exec redis-server --appendonly yes --appendfsync everysec --maxmemory 384mb --maxmemory-policy volatile-lru
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+
+  minio:
+    container_name: minio__open-wearables
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${AWS_ACCESS_KEY_ID:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${AWS_SECRET_ACCESS_KEY:-minioadmin}"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"        # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001" # web console
+    volumes:
+      - minio_data:/data
+    restart: on-failure
+
+  # One-shot: wait for MinIO, create the buckets the backend expects, then exit.
+  minio-createbuckets:
+    container_name: minio-createbuckets__open-wearables
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint:
+      - sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 "${AWS_ACCESS_KEY_ID:-minioadmin}" "${AWS_SECRET_ACCESS_KEY:-minioadmin}"; do
+          echo "waiting for minio..."; sleep 1
+        done
+        mc mb --ignore-existing local/"${RAW_PAYLOAD_S3_BUCKET:-raw-payloads}"
+        mc mb --ignore-existing local/"${AWS_BUCKET_NAME:-open-wearables}"
+        echo "buckets ready"
 
   svix-server:
     container_name: svix-server__open-wearables
@@ -222,3 +253,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  minio_data:
