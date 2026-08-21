@@ -13,6 +13,7 @@ from app.services.apple.apple_xml.aws_service import (
     get_s3_client,
     require_bucket_name,
 )
+from app.utils.structured_logging import log_structured
 
 
 class PresignedURLService:
@@ -21,7 +22,14 @@ class PresignedURLService:
 
     def generate_file_key(self, user_id: str, filename: str | None = None) -> str:
         file_key = build_object_key(user_id, filename)
-        self.log.debug(f"Generated file key: {file_key}")
+        log_structured(
+            self.log,
+            "debug",
+            "Generated Apple XML file key",
+            provider="apple_xml",
+            action="file_key_generated",
+            file_key=file_key,
+        )
         return file_key
 
     def validate_bucket_exists(self) -> str:
@@ -34,7 +42,14 @@ class PresignedURLService:
         bucket = require_bucket_name()
         try:
             s3_client.head_bucket(Bucket=bucket)
-            self.log.debug(f"S3 bucket exists: {bucket}")
+            log_structured(
+                self.log,
+                "debug",
+                "S3 bucket exists",
+                provider="apple_xml",
+                action="bucket_validated",
+                bucket=bucket,
+            )
             return bucket
         except ClientError as e:
             error_code = e.response["Error"]["Code"]
@@ -77,7 +92,15 @@ class PresignedURLService:
                 ExpiresIn=request.expiration_seconds,
             )
 
-            self.log.debug(f"Generated presigned URL: {presigned_post['url']}")
+            log_structured(
+                self.log,
+                "debug",
+                "Generated Apple XML presigned POST",
+                provider="apple_xml",
+                action="presigned_post_generated",
+                bucket=bucket,
+                file_key=file_key,
+            )
 
             return PresignedURLResponse(
                 upload_url=presigned_post["url"],
