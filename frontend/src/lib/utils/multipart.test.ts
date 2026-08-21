@@ -3,6 +3,7 @@ import {
   planMultipartParts,
   MIN_PART_SIZE,
   DEFAULT_PART_SIZE,
+  normalizeMultipartEtag,
 } from './multipart';
 
 describe('planMultipartParts', () => {
@@ -45,5 +46,15 @@ describe('planMultipartParts', () => {
     const parts = planMultipartParts(MIN_PART_SIZE + 1, 1);
     expect(parts).toHaveLength(2);
     expect(parts[0].end - parts[0].start).toBe(MIN_PART_SIZE);
+  });
+});
+
+describe('normalizeMultipartEtag', () => {
+  it('preserves the quotes returned by AWS S3 and MinIO', () => {
+    expect(normalizeMultipartEtag('  "abc123"  ')).toBe('"abc123"');
+  });
+
+  it('preserves an unquoted ETag', () => {
+    expect(normalizeMultipartEtag('abc123-4')).toBe('abc123-4');
   });
 });

@@ -187,68 +187,6 @@ services:
       start_period: 10s
     restart: on-failure
 
-  # Object storage (S3-compatible): Apple Health XML uploads, raw payloads, FIT files.
-  # The app talks to whichever endpoint AWS_ENDPOINT_URL points at, and this is set in
-  # backend/config/.env (NOT here), so compose never clobbers your credentials.
-  # Local-dev defaults (see docker/seaweedfs/s3_config.json and .env.example):
-  #   AWS_ENDPOINT_URL=http://seaweedfs:8333
-  #   AWS_BUCKET_NAME=open-wearables
-  #   AWS_ACCESS_KEY_ID=open-wearables
-  #   AWS_SECRET_ACCESS_KEY=open-wearables-secret
-  #
-  # Encryption at rest (configured in backend/config/.env.example):
-  #   DATA_ENCRYPTION_KEY — app-level Fernet for raw/FIT payloads; backend-agnostic.
-  #   AWS_SSE_ALGORITHM   — storage-side SSE for the browser-direct XML; the backend
-  #                         must support it (SeaweedFS/MinIO notes below).
-  #
-  # Browser note: presigned upload URLs embed the endpoint host. Set
-  # AWS_PUBLIC_ENDPOINT_URL=http://localhost:8333 so the browser uses the mapped port
-  # while backend-side requests continue to use http://seaweedfs:8333.
-
-  seaweedfs:
-    container_name: seaweedfs__open-wearables
-    image: chrislusf/seaweedfs:4.42
-    # All-in-one (master + volume + filer + S3 gateway). Identities in s3_config.json
-    # make the dev access key/secret authenticate the same way AWS S3 would.
-    command: "server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3_config.json -master.volumeSizeLimitMB=1024"
-    ports:
-      - "${SEAWEEDFS_S3_PORT:-8333}:8333"    # S3 API (used by the app and the browser)
-      - "${SEAWEEDFS_FILER_PORT:-8888}:8888" # Filer UI (optional, for debugging)
-    environment:
-      # Required because the app defaults to SSE-S3 (AES256). Keep this value stable:
-      # changing it makes existing SSE-encrypted objects unreadable! Override this
-      # development default with SEAWEEDFS_SSE_KEY when retaining local health data.
-      WEED_S3_SSE_KEY: "${SEAWEEDFS_SSE_KEY:-open-wearables-local-development-sse-key}"
-      # Protect any filer-persisted KEK used by SeaweedFS migration/fallback paths.
-      WEED_S3_SSE_KEK_PASSPHRASE: "${SEAWEEDFS_SSE_KEK_PASSPHRASE:-open-wearables-local-development-kek-passphrase}"
-    volumes:
-      - seaweedfs_data:/data
-      - ./docker/seaweedfs/s3_config.json:/etc/seaweedfs/s3_config.json:ro
-    restart: on-failure
-
-  # Creates the bucket once SeaweedFS is up, then exits. Idempotent (safe to re-run).
-  seaweedfs-init:
-    container_name: seaweedfs-init__open-wearables
-    image: amazon/aws-cli:2.36.25
-    depends_on:
-      - seaweedfs
-    environment:
-      AWS_ACCESS_KEY_ID: open-wearables
-      AWS_SECRET_ACCESS_KEY: open-wearables-secret
-      AWS_DEFAULT_REGION: eu-north-1
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        for i in $$(seq 1 30); do
-          if aws --endpoint-url http://seaweedfs:8333 s3api create-bucket --bucket open-wearables 2>/dev/null \
-             || aws --endpoint-url http://seaweedfs:8333 s3api head-bucket --bucket open-wearables 2>/dev/null; then
-            echo "SeaweedFS bucket 'open-wearables' ready"; exit 0
-          fi
-          echo "waiting for SeaweedFS S3 ($$i/30)..."; sleep 2
-        done
-        echo "SeaweedFS S3 did not become ready in time" >&2; exit 1
-    restart: "no"
-
   frontend:
     build:
       context: ./frontend
@@ -284,4 +222,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  seaweedfs_data:

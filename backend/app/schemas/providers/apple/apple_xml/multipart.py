@@ -11,15 +11,16 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from app.config import settings
+
 from .aws import MAX_FILE_SIZE
 
 MIN_PART_SIZE = 5 * 1024 * 1024  # 5 MiB (S3 minimum, except the final part)
 MAX_PART_SIZE = 5 * 1024 * 1024 * 1024  # 5 GiB
 MAX_PARTS = 10_000
-# At the 5 GiB product limit, 100 MiB yields at most 52 requests. This keeps browser
-# request overhead modest without making retries unnecessarily expensive.
+# Backward-compatible exported default; runtime recommendations read the setting so
+# operators can tune it without changing S3's fixed protocol limits.
 DEFAULT_PART_SIZE = 100 * 1024 * 1024
-
 MIN_EXPIRATION_SECONDS = 60  # 1 minute
 MAX_EXPIRATION_SECONDS = 24 * 60 * 60  # 24 hours
 DEFAULT_EXPIRATION_SECONDS = MAX_EXPIRATION_SECONDS  # Supports slow multi-gigabyte uploads
@@ -28,10 +29,10 @@ DEFAULT_EXPIRATION_SECONDS = MAX_EXPIRATION_SECONDS  # Supports slow multi-gigab
 def recommended_part_size(file_size: int) -> int:
     """Pick a part size that keeps the upload within S3's 10,000-part limit.
 
-    Uses ``DEFAULT_PART_SIZE`` for typical files and grows it (rounded up to a whole
+    Uses the configured default for typical files and grows it (rounded up to a whole
     number of MiB) only when the file is large enough to otherwise exceed MAX_PARTS.
     """
-    part_size = DEFAULT_PART_SIZE
+    part_size = settings.apple_xml_multipart_part_size_bytes
     if ceil(file_size / part_size) > MAX_PARTS:
         needed = ceil(file_size / MAX_PARTS)
         # round up to the next whole MiB for tidy, aligned parts
@@ -104,3 +105,8 @@ class MultipartCompleteResponse(BaseModel):
 class MultipartAbortRequest(BaseModel):
     key: str = Field(..., max_length=1024)
     upload_id: str = Field(..., max_length=1024)
+
+
+class MultipartAbortResponse(BaseModel):
+    status: str
+    key: str

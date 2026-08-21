@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.exceptions import ClientError
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.integrations.celery.tasks.process_aws_upload_task import (
@@ -236,6 +238,131 @@ class TestProcessUploadTask:
             bucket_name="test-bucket",
         )
         mock_process.assert_called_once_with("test-bucket", key, "user-123")
+
+    @patch("app.integrations.celery.tasks.process_aws_upload_task._process_aws_upload")
+    def test_success_marker_suppresses_duplicate_processing(
+        self,
+        mock_process: MagicMock,
+        mock_celery_app: MagicMock,
+    ) -> None:
+        mock_process.return_value = {
+            "bucket": "test-bucket",
+            "input_key": "user-123/raw/export.xml",
+            "user_id": "user-123",
+            "status": "success",
+            "message": "Import completed successfully",
+        }
+
+        first = process_aws_upload("test-bucket", "user-123/raw/export.xml", "user-123")
+        second = process_aws_upload("test-bucket", "user-123/raw/export.xml", "user-123")
+
+        assert second == first
+        mock_process.assert_called_once_with("test-bucket", "user-123/raw/export.xml", "user-123")
+
+    @patch("app.integrations.celery.tasks.process_aws_upload_task._process_aws_upload")
+    @patch("app.integrations.celery.tasks.process_aws_upload_task.multipart_upload_service")
+    def test_retry_after_processing_failure_skips_consumed_upload_id(
+        self,
+        mock_multipart_service: MagicMock,
+        mock_process: MagicMock,
+        mock_celery_app: MagicMock,
+    ) -> None:
+        key = "user-123/raw/export.xml"
+        success = {"status": "success", "message": "Import completed successfully"}
+        mock_process.side_effect = [RuntimeError("temporary database failure"), success]
+
+        with pytest.raises(RuntimeError, match="temporary database failure"):
+            complete_and_process_aws_upload(
+                bucket_name="test-bucket",
+                object_key=key,
+                upload_id="upload-1",
+                parts=[{"part_number": 1, "etag": "etag-1"}],
+                user_id="user-123",
+            )
+
+        result = complete_and_process_aws_upload(
+            bucket_name="test-bucket",
+            object_key=key,
+            upload_id="upload-1",
+            parts=[{"part_number": 1, "etag": "etag-1"}],
+            user_id="user-123",
+        )
+
+        assert result == success
+        mock_multipart_service.complete_upload.assert_called_once()
+        assert mock_process.call_count == 2
+
+    def test_object_processing_tasks_use_late_ack_and_retries(self) -> None:
+        assert process_aws_upload.acks_late is True
+        assert process_aws_upload.reject_on_worker_lost is True
+        assert process_aws_upload.max_retries == 3
+        assert complete_and_process_aws_upload.acks_late is True
+        assert complete_and_process_aws_upload.reject_on_worker_lost is True
+        assert complete_and_process_aws_upload.max_retries == 3
+
+    @patch("app.integrations.celery.tasks.process_aws_upload_task._process_aws_upload")
+    @patch("app.integrations.celery.tasks.process_aws_upload_task.get_s3_client")
+    @patch("app.integrations.celery.tasks.process_aws_upload_task.multipart_upload_service")
+    def test_complete_is_idempotent_when_upload_already_finalized(
+        self,
+        mock_multipart_service: MagicMock,
+        mock_get_s3_client: MagicMock,
+        mock_process: MagicMock,
+        mock_celery_app: MagicMock,
+    ) -> None:
+        """A duplicate delivery finds the upload already completed (404) but the object
+        present, so it must still process instead of failing on the consumed upload id."""
+        key = "user-123/raw/export.xml"
+        mock_multipart_service.complete_upload.side_effect = HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Failed to complete multipart upload: NoSuchUpload"
+        )
+        mock_s3 = MagicMock()
+        mock_s3.head_object.return_value = {}  # object exists -> completion already happened
+        mock_get_s3_client.return_value = mock_s3
+        mock_process.return_value = {"status": "success"}
+
+        result = complete_and_process_aws_upload(
+            bucket_name="test-bucket",
+            object_key=key,
+            upload_id="upload-1",
+            parts=[{"part_number": 1, "etag": "etag-1"}],
+            user_id="user-123",
+        )
+
+        assert result == {"status": "success"}
+        mock_s3.head_object.assert_called_once_with(Bucket="test-bucket", Key=key)
+        mock_process.assert_called_once_with("test-bucket", key, "user-123")
+
+    @patch("app.integrations.celery.tasks.process_aws_upload_task._process_aws_upload")
+    @patch("app.integrations.celery.tasks.process_aws_upload_task.get_s3_client")
+    @patch("app.integrations.celery.tasks.process_aws_upload_task.multipart_upload_service")
+    def test_complete_404_without_object_propagates(
+        self,
+        mock_multipart_service: MagicMock,
+        mock_get_s3_client: MagicMock,
+        mock_process: MagicMock,
+        mock_celery_app: MagicMock,
+    ) -> None:
+        """A genuine 404 (no finalized object) must not be swallowed, and must not process."""
+        key = "user-123/raw/export.xml"
+        mock_multipart_service.complete_upload.side_effect = HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Failed to complete multipart upload: NoSuchUpload"
+        )
+        mock_s3 = MagicMock()
+        mock_s3.head_object.side_effect = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+        mock_get_s3_client.return_value = mock_s3
+
+        with pytest.raises(HTTPException) as exc:
+            complete_and_process_aws_upload(
+                bucket_name="test-bucket",
+                object_key=key,
+                upload_id="upload-1",
+                parts=[{"part_number": 1, "etag": "etag-1"}],
+                user_id="user-123",
+            )
+
+        assert exc.value.status_code == status.HTTP_404_NOT_FOUND
+        mock_process.assert_not_called()
 
 
 class TestImportXmlData:

@@ -1,7 +1,7 @@
 """Shared factory for boto3 S3 clients.
 
 Both the Apple Health XML upload flow and raw payload storage talk to S3 (or an
-S3-compatible server such as SeaweedFS or MinIO). Centralising client creation keeps
+S3-compatible server such as MinIO). Centralising client creation keeps
 their endpoint, addressing, and signature configuration consistent.
 """
 
@@ -10,7 +10,7 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import NoCredentialsError
+from botocore.exceptions import BotoCoreError
 
 from app.config import settings
 from app.utils.structured_logging import log_structured
@@ -22,7 +22,7 @@ def create_s3_client(endpoint_url: str | None = None) -> Any:
     """Create a boto3 S3 client from the app's AWS settings.
 
     An explicit ``endpoint_url`` takes precedence over the shared ``AWS_ENDPOINT_URL``
-    setting. When either is configured (e.g. for SeaweedFS or MinIO), the client uses
+    setting. When either is configured (e.g. for MinIO), the client uses
     path-style addressing and SigV4 signing.
 
     Explicit credentials are used when configured; otherwise boto3 falls back to its
@@ -43,7 +43,7 @@ def create_s3_client(endpoint_url: str | None = None) -> Any:
             kwargs["config"] = Config(signature_version="s3v4", s3={"addressing_style": "path"})
 
         return boto3.client("s3", **kwargs)
-    except (NoCredentialsError, AttributeError) as e:
+    except (BotoCoreError, ValueError, AttributeError) as e:
         log_structured(
             logger,
             "warning",
@@ -52,36 +52,3 @@ def create_s3_client(endpoint_url: str | None = None) -> Any:
             error=str(e),
         )
         return None
-
-
-def sse_put_kwargs() -> dict[str, str]:
-    """Server-side-encryption kwargs for ``put_object`` / ``create_multipart_upload``.
-
-    Reads ``AWS_SSE_ALGORITHM`` (+ ``AWS_SSE_KMS_KEY_ID`` for ``aws:kms``). Returns an
-    empty dict when SSE is disabled, so callers can safely ``**sse_put_kwargs()`` into a
-    boto3 call. Individual multipart ``upload_part`` requests must NOT carry these headers
-    for SSE-S3/SSE-KMS — the encryption is fixed at create time.
-    """
-    algorithm = (settings.aws_sse_algorithm or "").strip()
-    if not algorithm or algorithm.lower() == "none":
-        return {}
-    kwargs: dict[str, str] = {"ServerSideEncryption": algorithm}
-    if algorithm == "aws:kms" and settings.aws_sse_kms_key_id:
-        kwargs["SSEKMSKeyId"] = settings.aws_sse_kms_key_id
-    return kwargs
-
-
-def sse_post_fields() -> dict[str, str]:
-    """SSE fields to merge into a presigned POST form (empty dict when disabled).
-
-    The browser echoes these fields back in the upload form, and they are also added as
-    POST-policy conditions by the caller, so the object is rejected unless it is stored
-    encrypted.
-    """
-    kwargs = sse_put_kwargs()
-    fields: dict[str, str] = {}
-    if "ServerSideEncryption" in kwargs:
-        fields["x-amz-server-side-encryption"] = kwargs["ServerSideEncryption"]
-    if "SSEKMSKeyId" in kwargs:
-        fields["x-amz-server-side-encryption-aws-kms-key-id"] = kwargs["SSEKMSKeyId"]
-    return fields

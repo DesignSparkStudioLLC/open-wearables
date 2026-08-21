@@ -4,12 +4,8 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-from cryptography.fernet import Fernet
-from pydantic import SecretStr
 
-from app.config import settings
 from app.services import raw_payload_storage
-from app.utils import crypto
 
 
 @pytest.fixture(autouse=True)
@@ -20,18 +16,6 @@ def _reset_module_state() -> None:
     raw_payload_storage._s3_bucket = None
     raw_payload_storage._s3_prefix = "raw-payloads"
     raw_payload_storage._s3_client = None
-
-
-@pytest.fixture(autouse=True)
-def _encryption_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default to plaintext so tests don't depend on the developer's DATA_ENCRYPTION_KEY.
-
-    The encryption-specific tests opt in by setting a key themselves.
-    """
-    monkeypatch.setattr(settings, "data_encryption_key", None)
-    crypto.reset_cache()
-    yield
-    crypto.reset_cache()
 
 
 class TestConfigure:
@@ -156,87 +140,3 @@ class TestStoreRawPayload:
 
         call_kwargs = mock_client.put_object.call_args[1]
         assert call_kwargs["Body"] == b'{"pre":"serialized"}'
-
-    def test_s3_backend_applies_server_side_encryption(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(settings, "aws_sse_algorithm", "AES256")
-        mock_client = MagicMock()
-        mock_client.put_object.return_value = {"ETag": "test-etag"}
-
-        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
-            raw_payload_storage.configure("s3", 10 * 1024 * 1024, s3_bucket="test-bucket")
-
-        raw_payload_storage.store_raw_payload(source="webhook", provider="garmin", payload={"x": 1})
-
-        assert mock_client.put_object.call_args[1]["ServerSideEncryption"] == "AES256"
-
-
-class TestRawPayloadEncryption:
-    @pytest.fixture(autouse=True)
-    def _reset_cipher(self) -> None:
-        crypto.reset_cache()
-        yield
-        crypto.reset_cache()
-
-    def test_payload_is_encrypted_when_key_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(settings, "data_encryption_key", SecretStr(Fernet.generate_key().decode()))
-        crypto.reset_cache()
-
-        mock_client = MagicMock()
-        mock_client.put_object.return_value = {"ETag": "test-etag"}
-        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
-            raw_payload_storage.configure("s3", 10 * 1024 * 1024, s3_bucket="test-bucket")
-
-        raw_payload_storage.store_raw_payload(source="sdk", provider="apple", payload={"activity": "running"})
-
-        call_kwargs = mock_client.put_object.call_args[1]
-        # Body is ciphertext, not the plaintext JSON...
-        assert call_kwargs["Body"] != b'{"activity": "running"}'
-        assert call_kwargs["ContentType"] == "application/octet-stream"
-        assert call_kwargs["Metadata"]["encryption"] == "fernet"
-        assert call_kwargs["Metadata"]["original_content_type"] == "application/json"
-        # ...that round-trips back to the original payload.
-        assert json.loads(crypto.decrypt(call_kwargs["Body"])) == {"activity": "running"}
-
-    def test_fit_file_is_encrypted_when_key_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(settings, "data_encryption_key", SecretStr(Fernet.generate_key().decode()))
-        crypto.reset_cache()
-
-        mock_client = MagicMock()
-        mock_client.put_object.return_value = {"ETag": "test-etag"}
-        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
-            raw_payload_storage.configure("disabled", 10 * 1024 * 1024, s3_bucket="test-bucket", fit_files_enabled=True)
-
-        raw_payload_storage.store_fit_file(
-            provider="garmin", fit_bytes=b"\x0e\x10FITbinary", user_id="user-1", activity_id="act-1"
-        )
-
-        call_kwargs = mock_client.put_object.call_args[1]
-        assert call_kwargs["Body"] != b"\x0e\x10FITbinary"
-        assert call_kwargs["Metadata"]["encryption"] == "fernet"
-        assert crypto.decrypt(call_kwargs["Body"]) == b"\x0e\x10FITbinary"
-
-    def test_invalid_runtime_key_never_falls_back_to_plaintext(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(settings, "data_encryption_key", SecretStr("invalid"))
-        crypto.reset_cache()
-
-        mock_client = MagicMock()
-        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
-            raw_payload_storage.configure("s3", 10 * 1024 * 1024, s3_bucket="test-bucket")
-
-        raw_payload_storage.store_raw_payload(source="sdk", provider="apple", payload={"sensitive": True})
-
-        mock_client.put_object.assert_not_called()
-
-    def test_invalid_runtime_key_never_stores_plaintext_fit_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(settings, "data_encryption_key", SecretStr("invalid"))
-        crypto.reset_cache()
-
-        mock_client = MagicMock()
-        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
-            raw_payload_storage.configure("disabled", 1024, s3_bucket="test-bucket", fit_files_enabled=True)
-
-        raw_payload_storage.store_fit_file(
-            provider="garmin", fit_bytes=b"sensitive-fit", user_id="user-1", activity_id="activity-1"
-        )
-
-        mock_client.put_object.assert_not_called()

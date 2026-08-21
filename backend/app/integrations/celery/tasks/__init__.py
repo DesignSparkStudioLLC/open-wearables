@@ -18,7 +18,6 @@ from app.services.providers.garmin.backfill_state import (
 )
 
 from .archival_task import run_daily_archival
-from .cleanup_multipart_uploads_task import cleanup_stale_apple_xml_multipart_uploads
 from .emit_webhook_event_task import emit_webhook_event
 from .fill_missing_resilience_scores_task import fill_missing_resilience_scores
 from .fill_missing_sleep_scores_task import fill_missing_sleep_scores
@@ -64,7 +63,6 @@ __all__ = [
     # Archival
     "run_daily_archival",
     # Apple XML multipart uploads
-    "cleanup_stale_apple_xml_multipart_uploads",
     "complete_and_process_aws_upload",
     # Sleep score calculation
     "fill_missing_sleep_scores",

@@ -24,7 +24,7 @@ class TestCreateMultipart:
             json={"filename": "export.xml", "file_size": 200 * 1024 * 1024},
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert data["upload_id"] == "test-upload-id"
         assert data["key"].startswith(f"{user.id}/raw/")
@@ -109,7 +109,7 @@ class TestCompleteMultipart:
                 json={"key": key, "upload_id": "test-upload-id", "parts": [{"part_number": 1, "etag": "e1"}]},
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 202
         data = response.json()
         assert data["status"] == "processing"
         assert data["task_id"] == "task-123"

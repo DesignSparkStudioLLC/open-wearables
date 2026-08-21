@@ -13,15 +13,11 @@ from app.services.apple.apple_xml.aws_service import (
     get_s3_client,
     require_bucket_name,
 )
-from app.services.s3_client import sse_post_fields
 
 
 class PresignedURLService:
-    def __init__(self, log: Logger, **kwargs):
+    def __init__(self, log: Logger) -> None:
         self.log = log
-        self.s3_client = get_s3_client()
-        # Browser-facing client used only to presign the upload form (see get_public_s3_client).
-        self.public_s3_client = get_public_s3_client()
 
     def generate_file_key(self, user_id: str, filename: str | None = None) -> str:
         file_key = build_object_key(user_id, filename)
@@ -30,12 +26,14 @@ class PresignedURLService:
 
     def validate_bucket_exists(self) -> str:
         """Return the configured bucket after checking that it is accessible."""
-        if not self.s3_client:
+
+        s3_client = get_s3_client()
+        if not s3_client:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="S3 client not configured")
 
         bucket = require_bucket_name()
         try:
-            self.s3_client.head_bucket(Bucket=bucket)
+            s3_client.head_bucket(Bucket=bucket)
             self.log.debug(f"S3 bucket exists: {bucket}")
             return bucket
         except ClientError as e:
@@ -50,7 +48,8 @@ class PresignedURLService:
             ) from e
 
     def create_presigned_url(self, user_id: str, request: PresignedURLRequest) -> PresignedURLResponse:
-        if not self.s3_client:
+        s3_client = get_s3_client()
+        if not s3_client:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="S3 client not configured")
 
         bucket = self.validate_bucket_exists()
@@ -61,20 +60,15 @@ class PresignedURLService:
         )
 
         try:
-            # Enforce server-side encryption: the SSE fields are both handed to the
-            # browser (which echoes them in the form) and pinned as POST-policy
-            # conditions, so the upload is rejected unless it lands encrypted at rest.
-            sse_fields = sse_post_fields()
-            fields = {"Content-Type": "application/xml", **sse_fields}
+            fields = {"Content-Type": "application/xml"}
             conditions = [
                 ["content-length-range", 1, request.max_file_size],
                 {"Content-Type": "application/xml"},
-                *({key: value} for key, value in sse_fields.items()),
             ]
 
             # Presign against the browser-facing endpoint so the returned URL is one the
             # browser can actually reach (bucket existence was checked via the internal client).
-            presign_client = self.public_s3_client or self.s3_client
+            presign_client = get_public_s3_client() or s3_client
             presigned_post = presign_client.generate_presigned_post(
                 Bucket=bucket,
                 Key=file_key,

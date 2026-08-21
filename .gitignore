@@ -167,10 +167,6 @@ volumes
 *.json
 *.xml
 
-# Runtime configuration is usually ignored, but the bundled local SeaweedFS service
-# needs this development-only IAM configuration to exist in a fresh checkout.
-!docker/seaweedfs/s3_config.json
-
 # AI instruction local overrides (not committed)
 CLAUDE.local.md
 .claude/

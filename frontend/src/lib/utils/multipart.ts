@@ -12,6 +12,11 @@ export const DEFAULT_PART_SIZE = 100 * 1024 * 1024; // 100 MiB
 /** How many parts to upload concurrently. */
 export const PART_UPLOAD_CONCURRENCY = 4;
 
+/** Trim transport whitespace without changing the object store's opaque ETag. */
+export function normalizeMultipartEtag(etag: string): string {
+  return etag.trim();
+}
+
 export interface PartPlan {
   /** 1-based part number, as required by S3. */
   partNumber: number;

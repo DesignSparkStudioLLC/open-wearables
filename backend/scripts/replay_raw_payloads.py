@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Replay raw payloads stored in S3 back through the SDK sync endpoint.
 
-Standalone script - no imports from app.* required. Uses boto3, httpx, and cryptography.
+Standalone script - no imports from app.* required. Just boto3 + httpx + stdlib.
 
 Usage:
-    uv run --with boto3,httpx,cryptography python scripts/replay_raw_payloads.py \
+    uv run --with boto3,httpx python scripts/replay_raw_payloads.py \
         --user-id <UUID> \
         [--target-user-id <UUID>] \
         --api-url http://localhost:8000 \
@@ -36,40 +36,6 @@ from typing import Any
 
 import boto3
 import httpx
-from cryptography.fernet import Fernet, MultiFernet
-
-
-def load_decryptor() -> Any:
-    """Build a Fernet decryptor from ``DATA_ENCRYPTION_KEY`` env, or ``None`` if unset.
-
-    Payloads stored with application-level encryption enabled are Fernet ciphertext and
-    carry an ``encryption=fernet`` object-metadata marker. Provide the same key(s) here
-    (comma-separated for rotation) to replay them. Requires the ``cryptography`` package.
-    """
-    raw = os.environ.get("DATA_ENCRYPTION_KEY", "").strip()
-    if not raw:
-        return None
-
-    try:
-        parts = [part.strip() for part in raw.split(",")]
-        if any(not part for part in parts):
-            raise ValueError("empty key")
-        keys = [Fernet(part.encode("utf-8")) for part in parts]
-    except (TypeError, ValueError) as e:
-        raise ValueError("DATA_ENCRYPTION_KEY contains an invalid Fernet key") from e
-    return MultiFernet(keys)
-
-
-def decrypt_payload(payload: bytes, metadata: dict[str, str], decryptor: Any) -> bytes:
-    """Decrypt a marked payload while leaving legacy plaintext objects unchanged."""
-    scheme = metadata.get("encryption")
-    if scheme is None:
-        return payload
-    if scheme != "fernet":
-        raise RuntimeError(f"unsupported payload encryption scheme: {scheme}")
-    if decryptor is None:
-        raise RuntimeError("payload is encrypted; set DATA_ENCRYPTION_KEY to replay it")
-    return decryptor.decrypt(payload)
 
 
 def parse_args() -> argparse.Namespace:
@@ -301,15 +267,12 @@ def main() -> None:
     failed = 0
     total_bytes = 0
 
-    decryptor = load_decryptor()
-
     with httpx.Client(timeout=30.0) as http_client:
         for i, (key, last_modified) in enumerate(entries, 1):
             ts = last_modified.strftime("%Y-%m-%d %H:%M:%S")
             try:
                 obj = s3_client.get_object(Bucket=args.s3_bucket, Key=key)
                 payload_bytes = obj["Body"].read()
-                payload_bytes = decrypt_payload(payload_bytes, obj.get("Metadata", {}), decryptor)
                 size = len(payload_bytes)
                 total_bytes += size
 

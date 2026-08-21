@@ -3,7 +3,11 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { usersService } from '../../lib/api';
 import { queryKeys } from '../../lib/query/keys';
-import { S3_UPLOAD_THRESHOLD, MAX_FILE_SIZE } from '@/lib/constants/upload';
+import {
+  BYTES_PER_GIBIBYTE,
+  S3_UPLOAD_THRESHOLD,
+  MAX_FILE_SIZE,
+} from '@/lib/constants/upload';
 import type {
   UserRead,
   UserCreate,
@@ -181,8 +185,6 @@ export function useUploadAppleXml() {
 }
 
 export function useUploadAppleXmlViaS3() {
-  const queryClient = useQueryClient();
-
   return useMutation({
     mutationFn: ({
       userId,
@@ -196,18 +198,11 @@ export function useUploadAppleXmlViaS3() {
       // Multipart upload straight to object storage (S3 or MinIO). Parts are PUT
       // via presigned URLs; the backend finalizes the object and starts processing.
       usersService.uploadAppleXmlViaMultipart(userId, file, onProgress),
-    onSuccess: (_data, { userId }) => {
-      // Invalidate user data (processing happens asynchronously in a Celery task)
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.users.detail(userId),
-      });
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.health.all,
-        refetchType: 'active',
-      });
-      toast.success(
-        'XML file uploaded to object storage. Processing will begin shortly.'
-      );
+    onSuccess: (data) => {
+      const taskSuffix = data.task_id
+        ? ` Task ${data.task_id.slice(0, 8)}… is processing it.`
+        : ' Processing will begin from the configured storage notification.';
+      toast.success(`XML file uploaded to object storage.${taskSuffix}`);
     },
     onError: (error: unknown) => {
       const message =
@@ -283,8 +278,8 @@ export function useAppleXmlUpload(options: UseAppleXmlUploadOptions = {}) {
 
     // Validate file size
     if (file.size > MAX_FILE_SIZE) {
-      const maxSizeGB = (MAX_FILE_SIZE / (1024 * 1024 * 1024)).toFixed(0);
-      const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
+      const maxSizeGB = (MAX_FILE_SIZE / BYTES_PER_GIBIBYTE).toFixed(0);
+      const fileSizeGB = (file.size / BYTES_PER_GIBIBYTE).toFixed(2);
       toast.error(
         `File is too large (${fileSizeGB}GB). Maximum size is ${maxSizeGB}GB`
       );

@@ -6,7 +6,6 @@ multipart services; SNS notification handling remains in ``sns_service``.
 """
 
 from datetime import UTC, datetime
-from functools import cache
 from logging import getLogger
 from typing import Any
 from uuid import uuid4
@@ -32,7 +31,26 @@ def require_bucket_name() -> str:
     return settings.aws_bucket_name
 
 
-@cache
+# Successful clients are cached per endpoint so we don't rebuild them on every call.
+# Crucially, failures (missing credentials, unbuildable client) are never cached, so a
+# later configuration change can recover instead of the process being wedged at 503.
+_client_cache: dict[str | None, Any] = {}
+
+
+def _resolve_client(endpoint_url: str | None) -> Any | None:
+    if not (settings.aws_access_key_id and settings.aws_secret_access_key):
+        log_structured(logger, "warning", "AWS credentials not configured")
+        return None
+    cached = _client_cache.get(endpoint_url)
+    if cached is not None:
+        return cached
+    client = create_s3_client(endpoint_url)
+    if client is None:
+        return None
+    _client_cache[endpoint_url] = client
+    return client
+
+
 def get_s3_client() -> Any | None:
     """Return an S3 client for the Apple XML upload flow, or None when unconfigured.
 
@@ -40,26 +58,19 @@ def get_s3_client() -> Any | None:
     configured -> 503" behaviour that callers rely on. When ``AWS_ENDPOINT_URL``
     is set the client points at that S3-compatible server (e.g. MinIO).
     """
-    if not (settings.aws_access_key_id and settings.aws_secret_access_key):
-        log_structured(logger, "warning", "AWS credentials not configured")
-        return None
-    return create_s3_client(settings.aws_endpoint_url)
+    return _resolve_client(settings.aws_endpoint_url)
 
 
-@cache
 def get_public_s3_client() -> Any | None:
     """S3 client whose endpoint is what the *browser* will hit for presigned uploads.
 
-    Uses ``AWS_PUBLIC_ENDPOINT_URL`` when set (e.g. ``http://localhost:8333`` for a
-    Dockerised SeaweedFS/MinIO whose service name the browser can't resolve), otherwise
+    Uses ``AWS_PUBLIC_ENDPOINT_URL`` when set (e.g. ``http://localhost:9000`` for a
+    Dockerised MinIO whose service name the browser can't resolve), otherwise
     falls back to the internal ``AWS_ENDPOINT_URL``. Only used to presign POST /
     ``upload_part`` URLs handed to the browser — all backend-side S3 calls use
     :func:`get_s3_client`.
     """
-    if not (settings.aws_access_key_id and settings.aws_secret_access_key):
-        log_structured(logger, "warning", "AWS credentials not configured")
-        return None
-    return create_s3_client(settings.aws_public_endpoint_url or settings.aws_endpoint_url)
+    return _resolve_client(settings.aws_public_endpoint_url or settings.aws_endpoint_url)
 
 
 def get_sns_client() -> Any | None:

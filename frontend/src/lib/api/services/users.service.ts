@@ -4,9 +4,11 @@ import { getToken, clearSession } from '@/lib/auth/session';
 import { DEFAULT_REDIRECTS } from '@/lib/constants/routes';
 import { appendSearchParams } from '@/lib/utils/url';
 import {
+  normalizeMultipartEtag,
   planMultipartParts,
   PART_UPLOAD_CONCURRENCY,
 } from '@/lib/utils/multipart';
+import { UPLOAD_REQUEST_TIMEOUT_MS } from '@/lib/constants/upload';
 import type {
   UserRead,
   UserCreate,
@@ -194,6 +196,7 @@ export const usersService = {
       content_type: file.type || 'application/xml',
       file_size: file.size,
     });
+    let completionSubmitted = false;
 
     try {
       const plan = planMultipartParts(file.size, created.part_size);
@@ -250,6 +253,10 @@ export const usersService = {
         )
       );
 
+      // Once this request starts, its outcome can be uncertain: the server may have
+      // queued completion even if the response is lost. Do not race that worker with
+      // an abort; the bucket lifecycle policy cleans up genuinely abandoned uploads.
+      completionSubmitted = true;
       const result = await this.completeMultipartUpload(userId, {
         key: created.key,
         upload_id: created.upload_id,
@@ -258,11 +265,13 @@ export const usersService = {
       onProgress?.(100);
       return result;
     } catch (error) {
-      // Best-effort cleanup so incomplete parts don't linger in the bucket.
-      await this.abortMultipartUpload(userId, {
-        key: created.key,
-        upload_id: created.upload_id,
-      }).catch(() => undefined);
+      if (!completionSubmitted) {
+        // Best-effort cleanup while no completion request can be in flight.
+        await this.abortMultipartUpload(userId, {
+          key: created.key,
+          upload_id: created.upload_id,
+        }).catch(() => undefined);
+      }
       throw error;
     }
   },
@@ -283,11 +292,13 @@ export const usersService = {
 function putPartWithProgress(
   url: string,
   body: Blob,
-  onProgress?: (loadedBytes: number) => void
+  onProgress?: (loadedBytes: number) => void,
+  timeoutMs = UPLOAD_REQUEST_TIMEOUT_MS
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url);
+    xhr.timeout = timeoutMs;
 
     if (onProgress) {
       xhr.upload.addEventListener('progress', (event) => {
@@ -311,7 +322,7 @@ function putPartWithProgress(
         );
         return;
       }
-      resolve(etag);
+      resolve(normalizeMultipartEtag(etag));
     });
     xhr.addEventListener('error', () =>
       reject(new Error('Network error during part upload'))
@@ -334,6 +345,8 @@ interface UploadWithProgressOptions {
    * a 401/403 from a presigned S3/MinIO URL is not an app-auth failure.
    */
   handleUnauthorized?: boolean;
+  /** Finite request timeout; override for unusually slow deployments. */
+  timeoutMs?: number;
 }
 
 /**
@@ -345,11 +358,17 @@ interface UploadWithProgressOptions {
 function uploadWithProgress(
   url: string,
   formData: FormData,
-  { onProgress, headers, handleUnauthorized }: UploadWithProgressOptions = {}
+  {
+    onProgress,
+    headers,
+    handleUnauthorized,
+    timeoutMs = UPLOAD_REQUEST_TIMEOUT_MS,
+  }: UploadWithProgressOptions = {}
 ): Promise<{ status: number; statusText: string }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
+    xhr.timeout = timeoutMs;
 
     if (headers) {
       Object.entries(headers).forEach(([key, value]) => {

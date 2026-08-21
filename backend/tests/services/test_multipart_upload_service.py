@@ -9,18 +9,31 @@ from fastapi import HTTPException
 
 from app.config import settings
 from app.schemas.providers.apple.apple_xml import CompletedPart
+from app.services.apple.apple_xml import multipart_upload_service as mp_module
 from app.services.apple.apple_xml.multipart_upload_service import MultipartUploadService
 
 USER_ID = "user-123"
 
+# The service resolves its S3 clients per call via the module-level accessors, so tests
+# inject their mocks here rather than on the instance. The autouse fixture points the
+# accessors at this holder and resets it between tests.
+_clients: dict[str, MagicMock | None] = {"internal": None, "public": None}
+
+
+@pytest.fixture(autouse=True)
+def _patch_client_accessors(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clients["internal"] = None
+    _clients["public"] = None
+    monkeypatch.setattr(mp_module, "get_s3_client", lambda: _clients["internal"])
+    monkeypatch.setattr(mp_module, "get_public_s3_client", lambda: _clients["public"])
+
 
 def _service(client: MagicMock | None) -> MultipartUploadService:
-    service = MultipartUploadService(getLogger(__name__))
-    service.s3_client = client
     # By default the public (presigning) client is the same object, so tests that assert on
     # `client` see the presigned calls too. TestPublicEndpoint overrides it with a distinct mock.
-    service.public_s3_client = client
-    return service
+    _clients["internal"] = client
+    _clients["public"] = client
+    return MultipartUploadService(getLogger(__name__))
 
 
 def _client_error(code: str) -> ClientError:
@@ -40,27 +53,6 @@ class TestCreate:
         assert result.bucket == "test-bucket"
         assert result.part_size > 0
         client.create_multipart_upload.assert_called_once()
-
-    def test_create_enforces_server_side_encryption(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(settings, "aws_sse_algorithm", "AES256")
-        client = MagicMock()
-        client.create_multipart_upload.return_value = {"UploadId": "upload-1"}
-        service = _service(client)
-
-        service.create_upload(USER_ID, "export.xml", "application/xml", file_size=50 * 1024 * 1024)
-
-        kwargs = client.create_multipart_upload.call_args[1]
-        assert kwargs["ServerSideEncryption"] == "AES256"
-
-    def test_create_omits_sse_when_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(settings, "aws_sse_algorithm", "")
-        client = MagicMock()
-        client.create_multipart_upload.return_value = {"UploadId": "upload-1"}
-        service = _service(client)
-
-        service.create_upload(USER_ID, "export.xml", "application/xml", file_size=50 * 1024 * 1024)
-
-        assert "ServerSideEncryption" not in client.create_multipart_upload.call_args[1]
 
     def test_create_without_client_raises_503(self) -> None:
         service = _service(None)
@@ -126,6 +118,21 @@ class TestComplete:
         sent_parts = kwargs["MultipartUpload"]["Parts"]
         assert [p["PartNumber"] for p in sent_parts] == [1, 2]
 
+    def test_complete_preserves_quoted_etag(self) -> None:
+        client = MagicMock()
+        service = _service(client)
+        key = f"{USER_ID}/raw/export.xml"
+
+        service.complete_upload(
+            USER_ID,
+            key,
+            "upload-1",
+            [CompletedPart(part_number=1, etag='  "etag-1"  ')],
+        )
+
+        sent_parts = client.complete_multipart_upload.call_args.kwargs["MultipartUpload"]["Parts"]
+        assert sent_parts == [{"ETag": '"etag-1"', "PartNumber": 1}]
+
     def test_complete_rejects_foreign_key(self) -> None:
         service = _service(MagicMock())
         with pytest.raises(HTTPException) as exc:
@@ -157,7 +164,7 @@ class TestComplete:
 
         assert exc.value.status_code == 400
 
-    def test_complete_unknown_storage_error_raises_502(self) -> None:
+    def test_complete_access_denied_raises_403(self) -> None:
         client = MagicMock()
         client.complete_multipart_upload.side_effect = _client_error("AccessDenied")
         service = _service(client)
@@ -166,7 +173,7 @@ class TestComplete:
         with pytest.raises(HTTPException) as exc:
             service.complete_upload(USER_ID, key, "upload-1", [CompletedPart(part_number=1, etag="e")])
 
-        assert exc.value.status_code == 502
+        assert exc.value.status_code == 403
 
     def test_complete_accepts_explicit_bucket_for_background_job(self) -> None:
         client = MagicMock()
@@ -260,6 +267,41 @@ class TestValidateCompletionRequest:
 
         assert exc.value.status_code == 400
 
+    def test_rejects_quoted_and_unquoted_etag_mismatch(self) -> None:
+        client = MagicMock()
+        client.list_parts.return_value = {
+            "Parts": [{"PartNumber": 1, "ETag": '"etag-1"'}],
+            "IsTruncated": False,
+        }
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+
+        assert exc.value.status_code == 400
+
+    def test_accepts_matching_quoted_etags(self) -> None:
+        client = MagicMock()
+        client.list_parts.return_value = {
+            "Parts": [{"PartNumber": 1, "ETag": '"etag-1"'}],
+            "IsTruncated": False,
+        }
+        service = _service(client)
+
+        bucket = service.validate_completion_request(
+            USER_ID,
+            f"{USER_ID}/raw/export.xml",
+            "upload-1",
+            [CompletedPart(part_number=1, etag='"etag-1"')],
+        )
+
+        assert bucket == "test-bucket"
+
     def test_missing_upload_is_reported_as_404(self) -> None:
         client = MagicMock()
         client.list_parts.side_effect = _client_error("NoSuchUpload")
@@ -275,6 +317,131 @@ class TestValidateCompletionRequest:
 
         assert exc.value.status_code == 404
 
+    def test_non_advancing_pagination_marker_raises_502_and_does_not_hang(self) -> None:
+        # A misbehaving S3-compatible server that keeps the same NextPartNumberMarker must
+        # not wedge the request thread in an infinite loop.
+        client = MagicMock()
+        client.list_parts.return_value = {
+            "Parts": [{"PartNumber": 1, "ETag": "etag-1"}],
+            "IsTruncated": True,
+            "NextPartNumberMarker": 1,
+        }
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+
+        assert exc.value.status_code == 502
+
+    def test_non_numeric_pagination_marker_raises_502(self) -> None:
+        client = MagicMock()
+        client.list_parts.return_value = {
+            "Parts": [{"PartNumber": 1, "ETag": "etag-1"}],
+            "IsTruncated": True,
+            "NextPartNumberMarker": "not-a-number",
+        }
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+
+        assert exc.value.status_code == 502
+
+    def test_invalid_part_number_from_storage_raises_502(self) -> None:
+        client = MagicMock()
+        client.list_parts.return_value = {
+            "Parts": [{"PartNumber": "not-a-number", "ETag": "etag-1"}],
+            "IsTruncated": False,
+        }
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+
+        assert exc.value.status_code == 502
+
+    def test_invalid_parts_collection_from_storage_raises_502(self) -> None:
+        client = MagicMock()
+        client.list_parts.return_value = {
+            "Parts": None,
+            "IsTruncated": False,
+        }
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+
+        assert exc.value.status_code == 502
+
+    def test_repeated_part_across_pages_raises_502(self) -> None:
+        client = MagicMock()
+        client.list_parts.side_effect = [
+            {
+                "Parts": [{"PartNumber": 1, "ETag": "etag-1"}],
+                "IsTruncated": True,
+                "NextPartNumberMarker": 1,
+            },
+            {
+                "Parts": [{"PartNumber": 1, "ETag": "etag-1"}],
+                "IsTruncated": False,
+            },
+        ]
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+
+        assert exc.value.status_code == 502
+
+    def test_truncated_listing_is_bounded_by_maximum_page_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mp_module, "MAX_PARTS", 3)
+        client = MagicMock()
+        client.list_parts.side_effect = [
+            {
+                "Parts": [{"PartNumber": page, "ETag": f"etag-{page}"}],
+                "IsTruncated": True,
+                "NextPartNumberMarker": page,
+            }
+            for page in range(1, 4)
+        ]
+        service = _service(client)
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_completion_request(
+                USER_ID,
+                f"{USER_ID}/raw/export.xml",
+                "upload-1",
+                [CompletedPart(part_number=1, etag="etag-1")],
+            )
+
+        assert exc.value.status_code == 502
+        assert client.list_parts.call_count == 3
+
 
 class TestPublicEndpoint:
     """Presigned part URLs must be generated by the browser-facing (public) client, while
@@ -284,9 +451,9 @@ class TestPublicEndpoint:
         internal = MagicMock()
         public = MagicMock()
         public.generate_presigned_url.return_value = "https://localhost:8333/signed"
+        _clients["internal"] = internal
+        _clients["public"] = public
         service = MultipartUploadService(getLogger(__name__))
-        service.s3_client = internal
-        service.public_s3_client = public
 
         key = f"{USER_ID}/raw/export.xml"
         result = service.sign_upload_parts(USER_ID, key, "upload-1", [1, 2], expiration_seconds=3600)
@@ -299,9 +466,9 @@ class TestPublicEndpoint:
         internal = MagicMock()
         internal.create_multipart_upload.return_value = {"UploadId": "upload-1"}
         public = MagicMock()
+        _clients["internal"] = internal
+        _clients["public"] = public
         service = MultipartUploadService(getLogger(__name__))
-        service.s3_client = internal
-        service.public_s3_client = public
 
         service.create_upload(USER_ID, "export.xml", "application/xml", file_size=50 * 1024 * 1024)
 
@@ -312,7 +479,7 @@ class TestPublicEndpoint:
         internal = MagicMock()
         internal.generate_presigned_url.return_value = "https://storage/signed"
         service = _service(internal)
-        service.public_s3_client = None
+        _clients["public"] = None
 
         key = f"{USER_ID}/raw/export.xml"
         service.sign_upload_parts(USER_ID, key, "upload-1", [1], expiration_seconds=3600)

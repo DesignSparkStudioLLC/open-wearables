@@ -5,6 +5,7 @@ from math import ceil
 import pytest
 from pydantic import ValidationError
 
+from app.config import settings
 from app.schemas.providers.apple.apple_xml import (
     DEFAULT_PART_SIZE,
     MAX_FILE_SIZE,
@@ -22,8 +23,17 @@ from app.schemas.providers.apple.apple_xml.multipart import (
 
 
 class TestRecommendedPartSize:
+    def test_product_file_size_limit_comes_from_settings(self) -> None:
+        assert settings.apple_xml_max_file_size_bytes == MAX_FILE_SIZE
+
     def test_small_file_uses_default_part_size(self) -> None:
         assert recommended_part_size(50 * 1024 * 1024) == DEFAULT_PART_SIZE
+
+    def test_runtime_default_is_configurable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        configured_size = 64 * 1024 * 1024
+        monkeypatch.setattr(settings, "apple_xml_multipart_part_size_bytes", configured_size)
+
+        assert recommended_part_size(50 * 1024 * 1024) == configured_size
 
     def test_file_at_default_capacity_stays_default(self) -> None:
         # DEFAULT_PART_SIZE * MAX_PARTS is the largest file the default handles

@@ -1,7 +1,7 @@
 import json
 from json import JSONDecodeError
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, status
 from pydantic import ValidationError
 
 from app.config import settings
@@ -9,6 +9,7 @@ from app.integrations.celery.tasks.process_aws_upload_task import complete_and_p
 from app.integrations.celery.tasks.process_xml_upload_task import process_xml_upload
 from app.schemas.providers.apple.apple_xml import (
     MultipartAbortRequest,
+    MultipartAbortResponse,
     MultipartCompleteRequest,
     MultipartCompleteResponse,
     MultipartCreateRequest,
@@ -39,7 +40,10 @@ def import_xml_presigned_url(
     return presigned_url_service.create_presigned_url(user_id, request)
 
 
-@router.post("/users/{user_id}/import/apple/xml/s3/multipart/create")
+@router.post(
+    "/users/{user_id}/import/apple/xml/s3/multipart/create",
+    status_code=status.HTTP_201_CREATED,
+)
 def create_multipart_upload(
     user_id: str,
     request: MultipartCreateRequest,
@@ -54,7 +58,10 @@ def create_multipart_upload(
     )
 
 
-@router.post("/users/{user_id}/import/apple/xml/s3/multipart/sign")
+@router.post(
+    "/users/{user_id}/import/apple/xml/s3/multipart/sign",
+    status_code=status.HTTP_200_OK,
+)
 def sign_multipart_parts(
     user_id: str,
     request: MultipartSignRequest,
@@ -70,10 +77,14 @@ def sign_multipart_parts(
     )
 
 
-@router.post("/users/{user_id}/import/apple/xml/s3/multipart/complete")
+@router.post(
+    "/users/{user_id}/import/apple/xml/s3/multipart/complete",
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def complete_multipart_upload(
     user_id: str,
     request: MultipartCompleteRequest,
+    response: Response,
     _api_key: ApiKeyDep,
 ) -> MultipartCompleteResponse:
     """Finalize an SNS upload, or queue client-driven finalization and processing.
@@ -118,6 +129,7 @@ def complete_multipart_upload(
         parts=request.parts,
     )
     bucket_name = require_bucket_name()
+    response.status_code = status.HTTP_200_OK
 
     return MultipartCompleteResponse(
         status="uploaded",
@@ -127,15 +139,18 @@ def complete_multipart_upload(
     )
 
 
-@router.post("/users/{user_id}/import/apple/xml/s3/multipart/abort")
+@router.post(
+    "/users/{user_id}/import/apple/xml/s3/multipart/abort",
+    status_code=status.HTTP_200_OK,
+)
 def abort_multipart_upload(
     user_id: str,
     request: MultipartAbortRequest,
     _api_key: ApiKeyDep,
-) -> dict[str, str]:
+) -> MultipartAbortResponse:
     """Abort an incomplete multipart upload and discard its parts."""
     multipart_upload_service.abort_upload(user_id=user_id, key=request.key, upload_id=request.upload_id)
-    return {"status": "aborted", "key": request.key}
+    return MultipartAbortResponse(status="aborted", key=request.key)
 
 
 @router.post("/users/{user_id}/import/apple/xml/direct")
