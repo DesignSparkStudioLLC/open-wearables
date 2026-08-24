@@ -234,29 +234,19 @@ class Settings(BaseSettings):
     aws_region: str = "eu-north-1"
     # for topic ARN verification from SNS notification (signature is verified regardless)
     aws_sns_topic_arn: SecretStr | None = None
-    # Optional custom endpoint for S3-compatible object storage (e.g. MinIO).
-    # The shared client factory forces path-style addressing + SigV4 for custom endpoints.
+    # S3-compatible endpoint (e.g. MinIO); enables path-style + SigV4. See Apple XML import docs.
     aws_endpoint_url: str | None = None
-    # Browser-facing endpoint for presigned uploads. The backend reaches storage at
-    # aws_endpoint_url (e.g. a Docker service name), but the *browser* uploads directly to
-    # the presigned URL and may not resolve that hostname — set this to what the browser
-    # can reach (e.g. http://localhost:9000). Only presigned POST + multipart part URLs use
-    # it. Every backend-side S3 call uses aws_endpoint_url. Unset -> falls back to it.
+    # browser-facing endpoint for presigned URLs; falls back to aws_endpoint_url
     aws_public_endpoint_url: str | None = None
-    # How a completed S3/MinIO XML upload triggers processing:
-    #   "client" — the frontend calls the /complete endpoint (works for S3 and MinIO alike)
-    #   "sns"    — an S3 bucket event fans out through SNS to /sns/notification (AWS only)
-    # Only the selected mode dispatches the import task, so processing never runs twice.
+    # upload trigger: "client" (/complete) or "sns" (S3 bucket event); only one dispatches
     apple_xml_upload_completion_mode: Literal["client", "sns"] = "client"
-    # Product-level upload cap. S3's protocol ceiling is 5 TiB; the portal currently
-    # mirrors the 5 GiB default for client-side validation.
+    # max XML upload size, 5 MiB - 5 TiB (default 5 GiB)
     apple_xml_max_file_size_bytes: int = Field(
         5 * 1024 * 1024 * 1024,
         ge=5 * 1024 * 1024,
         le=5 * 1024 * 1024 * 1024 * 1024,
     )
-    # Recommended browser multipart chunk size. S3 protocol limits remain fixed in
-    # the multipart schema; this product-level default is operator-tunable.
+    # browser multipart chunk size, 5 MiB - 5 GiB (default 100 MiB)
     apple_xml_multipart_part_size_bytes: int = Field(
         100 * 1024 * 1024,
         ge=5 * 1024 * 1024,

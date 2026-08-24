@@ -272,6 +272,24 @@ The flow is four calls (all authenticated, all under `/import/apple/xml/s3/multi
   browser-facing origin (for example, `http://localhost:9000`).
 </Info>
 
+### Storage configuration reference
+
+These environment variables tune the S3/MinIO XML upload flow. All are optional; the
+defaults target real AWS S3.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AWS_ENDPOINT_URL` | _(unset — real AWS)_ | Custom S3-compatible endpoint (e.g. `http://minio:9000`). When set, the shared client factory forces **path-style addressing + SigV4** so presigned and multipart uploads behave consistently across S3 and MinIO. Used by every backend-side S3 call. |
+| `AWS_PUBLIC_ENDPOINT_URL` | _(falls back to `AWS_ENDPOINT_URL`)_ | Browser-facing endpoint for presigned POST + multipart part URLs. The backend reaches storage at `AWS_ENDPOINT_URL` (e.g. a Docker service name the browser can't resolve); point this at the port-mapped host instead (e.g. `http://localhost:9000`) to avoid editing `/etc/hosts`. Not needed on real AWS. |
+| `APPLE_XML_UPLOAD_COMPLETION_MODE` | `client` | How a finished upload triggers import: `client` dispatches from the `/complete` call (S3 and MinIO); `sns` waits for an S3 bucket event via SNS (AWS only). Only the selected mode dispatches, so a file is never processed twice. |
+| `APPLE_XML_MAX_FILE_SIZE_BYTES` | `5368709120` (5 GiB) | Product-level upload cap (accepts 5 MiB - 5 TiB). The portal mirrors this default for client-side validation. |
+| `APPLE_XML_MULTIPART_PART_SIZE_BYTES` | `104857600` (100 MiB) | Recommended browser chunk size returned by `create` (accepts 5 MiB - 5 GiB). Clients should use the returned `part_size`, not hard-code it. |
+
+<Note>
+  Browser part uploads read the `ETag` from the `PUT` response, so the bucket's CORS policy
+  must allow `PUT` and **expose the `ETag` header** (`ExposeHeaders: ["ETag"]`).
+</Note>
+
 ### Complete multipart example
 
 This script authenticates with an API key, creates and signs an upload, sends every
