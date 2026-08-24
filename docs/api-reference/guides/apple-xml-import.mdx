@@ -15,7 +15,7 @@ keywords: ["apple health xml import", "apple health export api", "healthkit xml 
 
 Import complete Apple Health data exports via XML files using one of these methods:
 
-1. **S3-compatible multipart upload** (Recommended) - For large files, uploads parts directly to AWS S3 or MinIO, reports progress, and explicitly queues processing.
+1. **S3-compatible multipart upload** (Recommended) - For large files, uploads parts directly to an S3-compatible bucket (AWS S3 or self-hosted), reports progress, and explicitly queues processing.
 2. **S3 presigned POST with SNS** - AWS-only workflow for deployments configured with `APPLE_XML_UPLOAD_COMPLETION_MODE=sns`.
 3. **Direct Upload** - For smaller files or testing, uploads directly to the API
 
@@ -220,12 +220,12 @@ curl -X POST "https://s3.amazonaws.com/bucket/key" \
   **Important:** When uploading to S3 with presigned POST, you must include all `form_fields` as form data, and the `file` field must be last.
 </Note>
 
-## Method 1b: Multipart Upload (S3 or MinIO)
+## Method 1b: Multipart Upload (S3-compatible)
 
 The portal uploads large exports using **multipart upload**, which splits the file into
-parts uploaded in parallel via presigned URLs. It works identically against AWS S3 and a
-self-hosted **MinIO** server, so a local deployment with no AWS account can still accept
-multi-gigabyte Apple Health exports through the UI.
+parts uploaded in parallel via presigned URLs. It works identically against any
+S3-compatible bucket (AWS S3 or a self-hosted server), so a local deployment with no AWS
+account can still accept multi-gigabyte Apple Health exports through the UI.
 
 The flow is four calls (all authenticated, all under `/import/apple/xml/s3/multipart`):
 
@@ -263,7 +263,7 @@ The flow is four calls (all authenticated, all under `/import/apple/xml/s3/multi
 </Note>
 
 <Info>
-  **Completion mode** — the deployment's `APPLE_XML_UPLOAD_COMPLETION_MODE` controls how a
+  **Completion mode** - the deployment's `APPLE_XML_UPLOAD_COMPLETION_MODE` controls how a
   finished upload starts processing, and thus the `/complete` response you get: `client`
   (default) dispatches the import from the `/complete` call and returns `202 Accepted` with
   a `task_id`; `sns` instead waits for an S3 bucket event and `/complete` only finalizes the
@@ -271,8 +271,8 @@ The flow is four calls (all authenticated, all under `/import/apple/xml/s3/multi
 </Info>
 
 See the [AWS S3 setup guide](/dev-guides/aws-setup#step-6-update-environment-variables) for
-the storage environment variables — custom endpoints (S3/MinIO), completion mode, and size
-limits — with their defaults.
+the storage environment variables - custom endpoints (any S3-compatible bucket), completion
+mode, and size limits - with their defaults.
 
 ### Complete multipart example
 
@@ -527,8 +527,8 @@ as retryable with exponential backoff.
         - Imports workouts and time series data to database
 
         In the default `client` mode, the presigned-POST method above has no completion
-        trigger — use **Method 1b (multipart)** and its `/complete` call instead, which is
-        what the portal uses and which works for both S3 and MinIO.
+        trigger - use **Method 1b (multipart)** and its `/complete` call instead, which is
+        what the portal uses and which works for any S3-compatible bucket.
       </Step>
     </Steps>
 

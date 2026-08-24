@@ -234,7 +234,7 @@ class Settings(BaseSettings):
     aws_region: str = "eu-north-1"
     # for topic ARN verification from SNS notification (signature is verified regardless)
     aws_sns_topic_arn: SecretStr | None = None
-    # S3-compatible endpoint (e.g. MinIO); enables path-style + SigV4. See Apple XML import docs.
+    # custom S3-compatible endpoint; enables path-style + SigV4. See Apple XML import docs.
     aws_endpoint_url: str | None = None
     # browser-facing endpoint for presigned URLs; falls back to aws_endpoint_url
     aws_public_endpoint_url: str | None = None
