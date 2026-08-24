@@ -152,10 +152,7 @@ class MultipartUploadService:
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         detail="Object storage returned an invalid multipart part listing",
                     ) from e
-                if (
-                    parsed_next_marker <= marker
-                    or parsed_next_marker < previous_part_number
-                ):
+                if parsed_next_marker <= marker or parsed_next_marker < previous_part_number:
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         detail="Object storage returned an invalid multipart part listing",
@@ -164,9 +161,7 @@ class MultipartUploadService:
         except ClientError as e:
             raise self._client_error(e, "Failed to validate multipart upload") from e
 
-        requested_parts = {
-            part.part_number: self._normalize_etag(part.etag) for part in parts
-        }
+        requested_parts = {part.part_number: self._normalize_etag(part.etag) for part in parts}
         if len(requested_parts) != len(parts) or requested_parts != uploaded_parts:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -270,8 +265,7 @@ class MultipartUploadService:
 
         ordered = sorted(parts, key=lambda p: p.part_number)
         multipart_parts = [
-            {"ETag": self._normalize_etag(part.etag), "PartNumber": part.part_number}
-            for part in ordered
+            {"ETag": self._normalize_etag(part.etag), "PartNumber": part.part_number} for part in ordered
         ]
 
         try:
