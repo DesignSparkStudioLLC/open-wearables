@@ -228,6 +228,25 @@ AWS_SECRET_ACCESS_KEY=your-secret-access-key
 AWS_SNS_TOPIC_ARN=arn:aws:sns:eu-north-1:123456789012:owear
 ```
 
+### Optional: S3-compatible storage and upload tuning
+
+These variables are all optional; their defaults target real AWS S3. Set the endpoint
+variables to run the same upload flow against a self-hosted **MinIO** (or other
+S3-compatible) server, and the rest to tune upload behavior.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AWS_ENDPOINT_URL` | _(unset — real AWS)_ | Custom S3-compatible endpoint (e.g. `http://minio:9000`). When set, the shared client factory forces **path-style addressing + SigV4** so presigned and multipart uploads behave consistently across S3 and MinIO. Used by every backend-side S3 call. |
+| `AWS_PUBLIC_ENDPOINT_URL` | _(falls back to `AWS_ENDPOINT_URL`)_ | Browser-facing endpoint for presigned POST + multipart part URLs. The backend reaches storage at `AWS_ENDPOINT_URL` (e.g. a Docker service name the browser can't resolve); point this at the port-mapped host instead (e.g. `http://localhost:9000`) to avoid editing `/etc/hosts`. Not needed on real AWS. |
+| `APPLE_XML_UPLOAD_COMPLETION_MODE` | `client` | How a finished upload triggers import: `client` dispatches from the `/complete` call (S3 and MinIO); `sns` waits for an S3 bucket event via SNS (AWS only, as configured above). Only the selected mode dispatches, so a file is never processed twice. |
+| `APPLE_XML_MAX_FILE_SIZE_BYTES` | `5368709120` (5 GiB) | Product-level upload cap (accepts 5 MiB - 5 TiB). The portal mirrors this default for client-side validation. |
+| `APPLE_XML_MULTIPART_PART_SIZE_BYTES` | `104857600` (100 MiB) | Recommended browser chunk size returned by the multipart `create` call (accepts 5 MiB - 5 GiB). Clients should use the returned `part_size`, not hard-code it. |
+
+<Note>
+  Browser multipart part uploads read the `ETag` from the `PUT` response, so the bucket's
+  CORS policy must allow `PUT` and **expose the `ETag` header** (`ExposeHeaders: ["ETag"]`).
+</Note>
+
 <Accordion title="How to Get AWS Credentials">
 ### Create IAM User with S3 and SNS Permissions
 
