@@ -59,10 +59,54 @@ aws s3api create-bucket \
 ```
 </Accordion>
 
+## Configure Bucket CORS (required for portal uploads)
+
+The portal uploads files **directly from the browser** to the bucket, which is a cross-origin
+request. Without a CORS policy the browser blocks the upload, and even a successful `PUT`
+hides the `ETag` the client needs to finalize a multipart upload. This applies to **both**
+completion modes and to any S3-compatible bucket.
+
+Apply a CORS policy that allows your portal's origin to `PUT`/`POST` and exposes the `ETag`
+response header:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://your-portal-domain.com"],
+    "AllowedMethods": ["PUT", "POST"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
+
+<Accordion title="Using AWS CLI">
+```bash
+aws s3api put-bucket-cors \
+  --bucket open-wearables-xml \
+  --cors-configuration file://cors.json
+```
+</Accordion>
+
+<Warning>
+  Replace `https://your-portal-domain.com` with your frontend origin (for local development,
+  `http://localhost:3000`). The `ExposeHeaders: ["ETag"]` entry is mandatory for multipart
+  uploads - without it the client cannot read part ETags and completion fails.
+</Warning>
+
+<Note>
+  **CORS is not an access-control mechanism.** It only relaxes the browser's same-origin rule
+  for reading cross-origin responses; it grants no access to the bucket. Every upload still
+  requires a short-lived, backend-issued **presigned URL**, and the bucket keeps **Block
+  Public Access** on. Scope `AllowedOrigins` to your own portal domain (avoid `*`) as
+  defense in depth, and keep `AllowedMethods` to only `PUT`/`POST`.
+</Note>
+
 <Info>
-  **Steps 2–5 apply only to `sns` completion mode.** Running the default `client` mode? Skip
-  ahead to [Step 6](#step-6-update-environment-variables) - you need the bucket above, credentials,
-  and a CORS policy, but no SNS topic, subscription, or S3 event notification.
+  **Steps 2-5 apply only to `sns` completion mode.** Running the default `client` mode? Skip
+  ahead to [Step 6](#step-6-update-environment-variables) - you need the bucket above, its CORS
+  policy, and credentials, but no SNS topic, subscription, or S3 event notification.
 </Info>
 
 ## Step 2: Create SNS Topic (SNS mode only)
@@ -256,8 +300,8 @@ rest to tune upload behavior.
 | `APPLE_XML_MULTIPART_PART_SIZE_BYTES` | `104857600` (100 MiB) | Recommended browser chunk size returned by the multipart `create` call (accepts 5 MiB - 5 GiB). Clients should use the returned `part_size`, not hard-code it. |
 
 <Note>
-  Browser multipart part uploads read the `ETag` from the `PUT` response, so the bucket's
-  CORS policy must allow `PUT` and **expose the `ETag` header** (`ExposeHeaders: ["ETag"]`).
+  Browser uploads also require the bucket [CORS policy](#configure-bucket-cors-required-for-portal-uploads)
+  configured above.
 </Note>
 
 <Accordion title="How to Get AWS Credentials">
