@@ -281,9 +281,18 @@ AWS_REGION=eu-north-1
 AWS_ACCESS_KEY_ID=your-access-key-id
 AWS_SECRET_ACCESS_KEY=your-secret-access-key
 
-# SNS Configuration
+# SNS Configuration (SNS completion mode only)
 AWS_SNS_TOPIC_ARN=arn:aws:sns:eu-north-1:123456789012:owear
 ```
+
+<Warning>
+  **The Celery worker also needs these AWS variables.** The import task runs on the worker and
+  downloads the uploaded XML directly from the bucket (`get_object`), so in a multi-service
+  deployment (Docker Compose, Railway, etc.) the worker service needs the same
+  `AWS_BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION` (plus any
+  `AWS_ENDPOINT_URL`) as the backend. Without them the task fails with
+  `RuntimeError: S3 client not configured`. This applies in **both** completion modes.
+</Warning>
 
 ### Optional: S3-compatible storage and upload tuning
 
@@ -314,7 +323,7 @@ rest to tune upload behavior.
 5. Click **Next: Permissions**
 6. Attach policies:
    - `AmazonS3FullAccess` (or create a custom policy with specific bucket access)
-   - `AmazonSNSFullAccess` (or create a custom policy with specific topic access)
+   - `AmazonSNSFullAccess` (SNS mode only, or create a custom policy with specific topic access). A custom SNS policy **must include `SNS:ConfirmSubscription`** - the backend calls it to confirm the HTTPS subscription; without it the subscription stays on "Pending confirmation".
 7. Click through to create the user
 8. **Copy** the **Access key ID** and **Secret access key** immediately (you won't see the secret again)
 
@@ -364,11 +373,13 @@ Test your configuration:
     **Possible causes:**
     - Backend is not publicly accessible
     - Endpoint URL is incorrect
+    - IAM user is missing `SNS:ConfirmSubscription` (common if the user was set up before the SQS→SNS migration and only has `AmazonSQSFullAccess`)
     - Backend returned an error during confirmation
     
     **Fix:**
     - Verify your backend is reachable from the internet
     - Check the endpoint URL matches `/api/v1/sns/notification`
+    - Ensure the IAM user has `SNS:ConfirmSubscription` (attach `AmazonSNSFullAccess` or add it to your custom policy)
     - Check backend logs for confirmation errors
     - Delete the subscription and create a new one
   </Accordion>
@@ -395,6 +406,22 @@ Test your configuration:
     - Verify IAM user has S3 and SNS permissions
     - Double-check `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
     - Ensure `AWS_REGION` matches where your bucket and topic are located
+  </Accordion>
+
+  <Accordion title="Import fails with 'S3 client not configured'">
+    **Cause:** the Celery **worker** service is missing AWS credentials. The import task runs on the worker and reads the file from the bucket, so the worker needs its own AWS configuration - not just the backend/API container.
+
+    **Fix:**
+    - Set `AWS_BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION` (plus any `AWS_ENDPOINT_URL`) on the **worker** service, then restart it
+    - In Docker Compose, confirm the worker service loads the same env file as the backend
+  </Accordion>
+
+  <Accordion title="Browser upload fails with 'Load Failed' or a CORS error">
+    **Cause:** the bucket has no CORS policy, or it does not expose the `ETag` header. Direct-from-browser uploads are cross-origin, so the preflight is rejected (or the client cannot read part ETags to complete a multipart upload).
+
+    **Fix:**
+    - Apply the [bucket CORS policy](#configure-bucket-cors-required-for-portal-uploads): allow your portal origin with `PUT`/`POST` and set `ExposeHeaders: ["ETag"]`
+    - Confirm `AllowedOrigins` matches the exact scheme + host + port the portal is served from
   </Accordion>
 </AccordionGroup>
 
