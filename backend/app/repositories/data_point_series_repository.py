@@ -1,5 +1,6 @@
 import contextlib
 from datetime import datetime, time, timedelta
+from typing import overload
 from uuid import UUID
 
 from psycopg.errors import UniqueViolation
@@ -54,6 +55,31 @@ class WriteCounts(int):
         obj.inserted = inserted
         obj.updated = updated
         return obj
+
+    @overload
+    def __add__(self, other: "WriteCounts") -> "WriteCounts": ...
+
+    @overload
+    def __add__(self, other: int) -> int: ...
+
+    def __add__(self, other: int) -> int:
+        """Keep the split when accumulating counts (``total += repo.bulk_create(...)``).
+
+        Adding a plain int can only produce a plain int — the split of those rows
+        is unknown, and claiming they were all inserts would be a lie.
+        """
+        if isinstance(other, WriteCounts):
+            return WriteCounts(self.inserted + other.inserted, self.updated + other.updated)
+        return int(self) + other
+
+    def __radd__(self, other: int) -> int:
+        # Makes sum() of WriteCounts work: the 0 start value passes the split through.
+        if other == 0:
+            return self
+        return other + int(self)
+
+    def __repr__(self) -> str:
+        return f"WriteCounts(inserted={self.inserted}, updated={self.updated})"
 
 
 class DataPointSeriesRepository(
