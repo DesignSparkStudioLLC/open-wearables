@@ -858,14 +858,14 @@ class Whoop247Data(Base247DataTemplate):
         user_id: UUID,
         cycle_id: str,
     ) -> dict[str, Any]:
-        """Fetch a single recovery record by cycle_id from /v2/recovery/{cycle_id}."""
-        response = self._make_api_request(db, user_id, f"/v2/recovery/{cycle_id}")
+        """Fetch a single recovery record by cycle_id from /v2/cycle/{cycle_id}/recovery."""
+        response = self._make_api_request(db, user_id, f"/v2/cycle/{cycle_id}/recovery")
         store_raw_payload(
             source="api_response",
             provider="whoop",
             payload=response,
             user_id=str(user_id),
-            trace_id=f"/v2/recovery/{cycle_id}",
+            trace_id=f"/v2/cycle/{cycle_id}/recovery",
         )
         return response if isinstance(response, dict) else {}
 
