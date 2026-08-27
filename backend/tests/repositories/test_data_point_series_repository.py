@@ -715,11 +715,12 @@ class TestDataPointSeriesRepository:
     ) -> None:
         # Arrange
         user = UserFactory()
+        ts = datetime(2099, 1, 1, tzinfo=timezone.utc)
         sample = TimeSeriesSampleCreate(
             id=uuid4(),
             user_id=user.id,
             source="oura",
-            recorded_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            recorded_at=ts,
             value=42,
             series_type=SeriesType.steps,
             data_source_id=None,
@@ -728,7 +729,7 @@ class TestDataPointSeriesRepository:
         # Act
         series_repo.bulk_create(db, [sample])
         db.commit()
-        row_id = db.query(DataPointSeries.id).filter(DataPointSeries.value == 42).scalar()
+        row_id = db.query(DataPointSeries.id).filter(DataPointSeries.recorded_at == ts).one()[0]
         xmin_before = db.execute(text("SELECT xmin FROM data_point_series WHERE id = :id"), {"id": row_id}).scalar()
 
         # Re-send the exact same row: same value, same everything -> conflicts, but
