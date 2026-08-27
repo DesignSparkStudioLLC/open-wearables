@@ -1,6 +1,5 @@
 import contextlib
 from datetime import datetime, time, timedelta
-from typing import overload
 from uuid import UUID
 
 from psycopg.errors import UniqueViolation
@@ -56,21 +55,16 @@ class WriteCounts(int):
         obj.updated = updated
         return obj
 
-    @overload
-    def __add__(self, other: "WriteCounts") -> "WriteCounts": ...
-
-    @overload
-    def __add__(self, other: int) -> int: ...
-
-    def __add__(self, other: int) -> int:
-        """Keep the split when accumulating counts (``total += repo.bulk_create(...)``).
-
-        Adding a plain int can only produce a plain int — the split of those rows
-        is unknown, and claiming they were all inserts would be a lie.
-        """
-        if isinstance(other, WriteCounts):
-            return WriteCounts(self.inserted + other.inserted, self.updated + other.updated)
-        return int(self) + other
+    # ty:ignore[invalid-method-override] — int.__add__ takes an int, so narrowing the
+    # parameter is unsound in principle. Deliberate: only WriteCounts + WriteCounts should
+    # type as WriteCounts. Adding a plain int still works at runtime (NotImplemented hands
+    # over to int.__radd__) and yields a plain int, since the split of those rows is
+    # unknown and claiming they were all inserts would be a lie.
+    def __add__(self, other: "WriteCounts") -> "WriteCounts":
+        """Keep the split when accumulating counts (``total += repo.bulk_create(...)``)."""
+        if not isinstance(other, WriteCounts):
+            return NotImplemented
+        return WriteCounts(self.inserted + other.inserted, self.updated + other.updated)
 
     def __radd__(self, other: int) -> int:
         # Makes sum() of WriteCounts work: the 0 start value passes the split through.
