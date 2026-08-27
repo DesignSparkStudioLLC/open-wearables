@@ -713,6 +713,7 @@ class TestDataPointSeriesRepository:
     def test_bulk_create_skips_rewriting_unchanged_duplicates(
         self, db: Session, series_repo: DataPointSeriesRepository
     ) -> None:
+        """Re-writing an identical row must not physically touch it (verified via xmin)."""
         # Arrange
         user = UserFactory()
         ts = datetime(2099, 1, 1, tzinfo=timezone.utc)
