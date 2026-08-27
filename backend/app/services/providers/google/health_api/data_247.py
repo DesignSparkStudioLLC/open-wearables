@@ -35,9 +35,9 @@ from app.services.providers.google.health_api.helpers import (
 )
 from app.services.providers.google.health_api.metrics import METRICS
 from app.services.providers.google.health_api.sleep import GoogleHealthApiSleep
+from app.services.providers.sync_247_result import Sync247Result
 from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
-from app.services.providers.templates.sync_247_result import Sync247Result
 from app.services.raw_payload_storage import store_raw_payload
 from app.services.timeseries_service import timeseries_service
 from app.utils.sentry_helpers import log_and_capture_error
@@ -87,7 +87,7 @@ class GoogleHealth247Data(Base247DataTemplate):
         with run.step("sleep", capture=True) as step:
             step.record(self.sleep.load_and_save(db, user_id, start_time, end_time))
 
-        if run.result.written:
+        if run.result.rows_written:
             db.commit()
 
         # Every attempted data type failed (e.g. ACCOUNT_NOT_LINKED) — the caller marks

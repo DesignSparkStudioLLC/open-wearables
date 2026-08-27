@@ -360,7 +360,7 @@ def sync_vendor_data(
                             }
                             pull_inserted += results_247.inserted
                             pull_updated += results_247.updated
-                            pull_written += results_247.written
+                            pull_written += results_247.rows_written
                             log_structured(
                                 logger,
                                 "info",
