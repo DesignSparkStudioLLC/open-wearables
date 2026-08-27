@@ -713,6 +713,7 @@ class TestDataPointSeriesRepository:
     def test_bulk_create_skips_rewriting_unchanged_duplicates(
         self, db: Session, series_repo: DataPointSeriesRepository
     ) -> None:
+        # Arrange
         user = UserFactory()
         sample = TimeSeriesSampleCreate(
             id=uuid4(),
@@ -724,6 +725,7 @@ class TestDataPointSeriesRepository:
             data_source_id=None,
         )
 
+        # Act
         series_repo.bulk_create(db, [sample])
         db.commit()
         row_id = db.query(DataPointSeries.id).filter(DataPointSeries.value == 42).scalar()
@@ -735,6 +737,7 @@ class TestDataPointSeriesRepository:
         db.commit()
         xmin_after = db.execute(text("SELECT xmin FROM data_point_series WHERE id = :id"), {"id": row_id}).scalar()
 
+        # Assert
         assert counts.updated == 1  # still reported as a conflict, per WriteCounts' contract
         assert xmin_after == xmin_before  # but Postgres never actually rewrote the row
 
@@ -742,6 +745,7 @@ class TestDataPointSeriesRepository:
         self, db: Session, series_repo: DataPointSeriesRepository
     ) -> None:
         """The no-op skip must not swallow genuine changes - only true duplicates."""
+        # Arrange
         user = UserFactory()
         ts = datetime(2099, 1, 2, tzinfo=timezone.utc)
 
@@ -756,12 +760,14 @@ class TestDataPointSeriesRepository:
                 data_source_id=None,
             )
 
+        # Act
         series_repo.bulk_create(db, [sample(1000)])
         db.commit()
 
         series_repo.bulk_create(db, [sample(2000)])
         db.commit()
 
+        # Assert
         stored = db.query(DataPointSeries.value).filter(DataPointSeries.recorded_at == ts).scalar()
         assert stored == 2000
 
@@ -772,6 +778,7 @@ class TestDataPointSeriesRepository:
         placeholder strings or fail to load - COPY has different NULL-encoding rules
         than a parameterized query, so this is worth checking explicitly.
         """
+        # Arrange
         user = UserFactory()
         sample = TimeSeriesSampleCreate(
             id=uuid4(),
@@ -786,9 +793,11 @@ class TestDataPointSeriesRepository:
             data_source_id=None,
         )
 
+        # Act
         series_repo.bulk_create(db, [sample])
         db.commit()
 
+        # Assert
         stored = db.query(DataPointSeries).filter(DataPointSeries.id == sample.id).one()
         assert stored.external_id is None
         assert stored.zone_offset is None
