@@ -89,9 +89,7 @@ class TestOuraWorkoutsNormalization:
         assert detail.distance is not None
         assert float(detail.distance) == pytest.approx(5000.0)
 
-    def test_normalize_workout_provenance(
-        self, workouts: OuraWorkouts, sample_oura_workout: OuraWorkoutJSON
-    ) -> None:
+    def test_normalize_workout_provenance(self, workouts: OuraWorkouts, sample_oura_workout: OuraWorkoutJSON) -> None:
         """Oura's per-workout source/intensity/label must reach the detail record, not the
         provider-level EventRecordCreate.source (which stays "oura")."""
         user_id = uuid4()
