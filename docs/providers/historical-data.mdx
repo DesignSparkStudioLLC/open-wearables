@@ -1,0 +1,39 @@
+---
+title: "Historical Data Availability"
+sidebarTitle: "Historical Data"
+description: "How far back you can backfill data per provider: Garmin, Oura, Whoop, Ultrahuman, Strava, Fitbit, Polar, Suunto, Google Health Connect, and more."
+keywords: ["historical data", "backfill window", "how far back sync", "max historical days", "wearable data history"]
+"og:title": "Historical Data Availability | Open Wearables"
+"og:description": "Maximum historical backfill window per wearable provider - how far back you can sync data."
+"og:url": "https://docs.openwearables.io/providers/historical-data"
+"og:type": "article"
+"twitter:title": "Historical Data Availability | Open Wearables"
+"twitter:description": "Maximum historical backfill window per wearable provider - how far back you can sync data."
+"twitter:card": "summary_large_image"
+---
+
+This page documents how far back historical data can be backfilled from each provider - the maximum range a historical sync can request.
+
+Use it to compare providers when planning an integration. For the full list of data types per provider, see the [Coverage Matrix](/providers/coverage).
+
+## Maximum Historical Range
+
+**Max range** is the furthest point in the past from which a provider allows historical data to be backfilled.
+
+| Provider | Max range | Remarks |
+|---|---|---|
+| Garmin | 30 days | Limited to 30 days before the user's connection (consent) date. Requires the `HISTORICAL_DATA_EXPORT` permission. One backfill request per user per timeframe - reconnect to request again. |
+| Oura | TBC | |
+| Whoop | TBC | |
+| Ultrahuman | TBC | |
+| Strava | TBC | |
+| Fitbit | TBC | |
+| Polar | TBC | |
+| Suunto | TBC | |
+| Google Health Connect | No limit | SDK-controlled - see note below. Bounded only by how much history the source apps have written to Health Connect on the device. |
+| Apple Health | No limit | SDK-controlled - see note below. |
+| Samsung Health | No limit | SDK-controlled - see note below. |
+
+<Note>
+  **SDK-based providers** (Google Health Connect, Apple Health, Samsung Health) have no backend-enforced historical limit today. How far back to sync is decided on the device by the mobile SDK, and the backend ingests whatever the SDK pushes. Backend-side control over the historical range for these providers will be added in the future.
+</Note>
