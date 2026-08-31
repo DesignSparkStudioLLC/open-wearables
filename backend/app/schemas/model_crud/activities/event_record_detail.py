@@ -1,7 +1,7 @@
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .sleep import SleepStage
 from .zones import HRZones, PowerZones
@@ -48,9 +48,12 @@ class EventRecordDetailBase(BaseModel):
     power_zones: PowerZones | None = None
 
     # Per-workout provenance/metadata some providers expose but others don't.
-    entry_source: str | None = None
-    intensity: str | None = None
-    label: str | None = None
+    # max_length mirrors the workout_details column widths (see migration
+    # 3f12f89c6e23) so an oversized provider value fails validation here
+    # instead of failing the INSERT.
+    entry_source: str | None = Field(default=None, max_length=32)
+    intensity: str | None = Field(default=None, max_length=10)
+    label: str | None = Field(default=None, max_length=255)
 
 
 class EventRecordDetailCreate(EventRecordDetailBase):

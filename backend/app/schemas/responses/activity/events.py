@@ -21,9 +21,9 @@ class Workout(BaseModel):
     duration_seconds: int | None = None
     source: SourceMetadata
     entry_source: str | None = Field(
-        None, description="How the workout was recorded, e.g. 'auto', 'manual'", example="auto"
+        None, description="How the workout was recorded, e.g. 'auto', 'manual'", examples=["auto"]
     )
-    intensity: str | None = Field(None, description="Provider-reported subjective intensity", example="moderate")
+    intensity: str | None = Field(None, description="Provider-reported subjective intensity", examples=["moderate"])
     calories_kcal: float | None = None
     distance_meters: float | None = None
     avg_heart_rate_bpm: int | None = None

@@ -132,6 +132,21 @@ class TestEventRecordDetailCreateValidation:
         assert detail.intensity == "hard"
         assert detail.label == "Evening Ride"
 
+    def test_entry_source_intensity_label_reject_oversized_values(self) -> None:
+        """max_length mirrors the workout_details column widths (32/10/255) so an
+        oversized provider value fails validation here instead of failing the INSERT."""
+        with pytest.raises(ValidationError):
+            EventRecordDetailCreate(record_id=uuid4(), entry_source="x" * 33)
+
+        with pytest.raises(ValidationError):
+            EventRecordDetailCreate(record_id=uuid4(), intensity="x" * 11)
+
+        with pytest.raises(ValidationError):
+            EventRecordDetailCreate(record_id=uuid4(), label="x" * 256)
+
+        # Exactly at the limit should still pass.
+        EventRecordDetailCreate(record_id=uuid4(), entry_source="x" * 32, intensity="x" * 10, label="x" * 255)
+
 
 class TestOAuthTokenResponseValidation:
     """Test suite for OAuthTokenResponse schema validation."""
