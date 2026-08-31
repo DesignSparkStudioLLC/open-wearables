@@ -190,6 +190,12 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         if raw_workout.moving_time is not None:
             metrics["moving_time_seconds"] = raw_workout.moving_time
 
+        if raw_workout.manual is not None:
+            metrics["entry_source"] = "manual" if raw_workout.manual else "auto"
+
+        if raw_workout.name:
+            metrics["label"] = raw_workout.name
+
         return metrics
 
     def _normalize_workout(

@@ -152,6 +152,16 @@ class OuraWorkouts(BaseWorkoutsTemplate):
             duration_seconds = int((end_dt - start_dt).total_seconds())
             metrics["moving_time_seconds"] = duration_seconds
 
+        # manual / autodetected / confirmed / workout_heart_rate
+        if raw_workout.source is not None:
+            metrics["entry_source"] = raw_workout.source
+
+        if raw_workout.intensity is not None:
+            metrics["intensity"] = raw_workout.intensity
+
+        if raw_workout.label is not None:
+            metrics["label"] = raw_workout.label
+
         return metrics
 
     def _normalize_workout(

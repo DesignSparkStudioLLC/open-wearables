@@ -47,6 +47,11 @@ class EventRecordDetailBase(BaseModel):
     hr_zones: HRZones | None = None
     power_zones: PowerZones | None = None
 
+    # Per-workout provenance/metadata some providers expose but others don't.
+    entry_source: str | None = None
+    intensity: str | None = None
+    label: str | None = None
+
 
 class EventRecordDetailCreate(EventRecordDetailBase):
     """Schema for creating an event record detail entry."""

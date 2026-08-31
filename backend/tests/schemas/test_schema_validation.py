@@ -120,6 +120,18 @@ class TestEventRecordDetailCreateValidation:
 
         assert "record_id" in str(exc_info.value)
 
+    def test_entry_source_intensity_and_label(self) -> None:
+        detail = EventRecordDetailCreate(
+            record_id=uuid4(),
+            entry_source="manual",
+            intensity="hard",
+            label="Evening Ride",
+        )
+
+        assert detail.entry_source == "manual"
+        assert detail.intensity == "hard"
+        assert detail.label == "Evening Ride"
+
 
 class TestOAuthTokenResponseValidation:
     """Test suite for OAuthTokenResponse schema validation."""

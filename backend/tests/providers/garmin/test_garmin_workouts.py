@@ -150,6 +150,32 @@ class TestGarminWorkouts:
         # Should handle zero values
         assert metrics["steps_count"] == 0
 
+    def test_build_metrics_entry_source_and_label(self, garmin_workouts: GarminWorkouts) -> None:
+        """manual and isWebUpload both signal a non-device-synced activity; either should
+        map to "manual" so the value can't be told apart at the storage layer."""
+        base = {
+            "userId": "user_123",
+            "activityId": "act_manual",
+            "activityType": "RUNNING",
+            "startTimeInSeconds": 1705309200,
+            "durationInSeconds": 3600,
+            "activityName": "Trail Run",
+        }
+
+        manual = GarminActivityJSON(**base, manual=True)
+        assert garmin_workouts._build_metrics(manual)["entry_source"] == "manual"
+
+        web_upload = GarminActivityJSON(**base, isWebUpload=True)
+        assert garmin_workouts._build_metrics(web_upload)["entry_source"] == "manual"
+
+        auto = GarminActivityJSON(**base, manual=False, isWebUpload=False)
+        assert garmin_workouts._build_metrics(auto)["entry_source"] == "auto"
+
+        unknown = GarminActivityJSON(**base)
+        assert "entry_source" not in garmin_workouts._build_metrics(unknown)
+
+        assert garmin_workouts._build_metrics(manual)["label"] == "Trail Run"
+
     def test_normalize_workout(self, garmin_workouts: GarminWorkouts, sample_activity: dict[str, Any]) -> None:
         """Test normalizing Garmin activity to event record."""
         user_id = uuid4()

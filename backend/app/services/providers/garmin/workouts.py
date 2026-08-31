@@ -184,7 +184,7 @@ class GarminWorkouts(BaseWorkoutsTemplate):
 
         average_cadence = Decimal(str(raw_workout.averageCadence)) if raw_workout.averageCadence is not None else None
 
-        return {
+        metrics: EventRecordMetrics = {
             # Garmin activity payloads carry only average and max heart rate
             "heart_rate_min": None,
             "heart_rate_max": int(heart_rate_max) if heart_rate_max is not None else None,
@@ -194,6 +194,16 @@ class GarminWorkouts(BaseWorkoutsTemplate):
             "distance": distance,
             "average_cadence": average_cadence,
         }
+
+        # isWebUpload means the activity was uploaded through Garmin Connect (e.g. a
+        # GPX/TCX file) rather than synced live from a device - treat it as manual too.
+        if raw_workout.manual is not None or raw_workout.isWebUpload is not None:
+            metrics["entry_source"] = "manual" if (raw_workout.manual or raw_workout.isWebUpload) else "auto"
+
+        if raw_workout.activityName:
+            metrics["label"] = raw_workout.activityName
+
+        return metrics
 
     def _normalize_workout(
         self,
