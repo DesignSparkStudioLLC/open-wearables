@@ -710,6 +710,8 @@ To page through results, pass `cursor=<next_cursor>` until `has_more` is `false`
       "zone_offset": "+01:00",
       "duration_seconds": 2700,
       "source": { "provider": "garmin", "device": "Garmin Forerunner 255" },
+      "entry_source": "auto",
+      "intensity": null,
       "calories_kcal": 450.5,
       "distance_meters": 5200.0,
       "avg_heart_rate_bpm": 155,
@@ -718,6 +720,7 @@ To page through results, pass `cursor=<next_cursor>` until `has_more` is `false`
       "elevation_gain_meters": 42.0
     }
     ```
+    `entry_source` and `intensity` are provider-dependent - see the [coverage matrix](/providers/coverage#workout-data-coverage) for which providers report them.
   </Tab>
   <Tab title="HealthScore">
     ```json
