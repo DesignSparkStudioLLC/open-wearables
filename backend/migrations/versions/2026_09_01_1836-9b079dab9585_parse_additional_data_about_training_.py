@@ -6,9 +6,8 @@ Revises: dc5ac28c4b94
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '9b079dab9585'
