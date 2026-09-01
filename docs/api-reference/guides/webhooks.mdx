@@ -201,8 +201,8 @@ Fired once when a complete session is saved or merged.
 
 | Event | Description |
 |-------|-------------|
-| `connection.created` | A user successfully connected a wearable provider. |
-| `connection.revoked` | A connection became invalid or was disconnected (refresh token expired/revoked, the user deregistered on the provider side, or the user manually disconnected). The user must re-authorize to resume syncing. |
+| `connection.created` | A user successfully connected a wearable provider. For OAuth providers this fires when authorization completes; SDK providers have no OAuth callback, so it fires when the first data upload arrives, and again when a previously revoked SDK connection resumes uploading. |
+| `connection.revoked` | A connection became invalid or was disconnected (refresh token expired/revoked, the user deregistered on the provider side, or the user manually disconnected). OAuth connections require re-authorization to resume syncing; SDK connections resume on the next upload. See the `reason` field. |
 | `workout.created` | A new workout session was saved. |
 | `sleep.created` | A new (or merged) sleep session was saved. |
 | `menstrual_cycle.created` | A new menstrual cycle record was saved. |
@@ -254,7 +254,13 @@ Every payload envelope has `type` (the event name as a string) and `data`.
 
 ### `connection.revoked`
 
-`reason` is a short cause, e.g. `refresh_failed`, `deregistration`, or `user_disconnected`.
+`reason` is a short cause:
+
+| Reason | Cause |
+|--------|-------|
+| `user_disconnected` | The connection was disconnected via the API. |
+| `refresh_failed` | The OAuth refresh token was rejected by the provider. |
+| `deregistration` | The user deregistered on the provider side (Garmin). |
 
 ```json
 {
