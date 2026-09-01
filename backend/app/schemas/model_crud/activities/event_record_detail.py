@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.enums import EntrySource, WorkoutIntensity
+
 from .sleep import SleepStage
 from .zones import HRZones, PowerZones
 
@@ -47,12 +49,8 @@ class EventRecordDetailBase(BaseModel):
     hr_zones: HRZones | None = None
     power_zones: PowerZones | None = None
 
-    # Per-workout provenance/metadata some providers expose but others don't.
-    # max_length mirrors the workout_details column widths (see migration
-    # 3f12f89c6e23) so an oversized provider value fails validation here
-    # instead of failing the INSERT.
-    entry_source: str | None = Field(default=None, max_length=32)
-    intensity: str | None = Field(default=None, max_length=10)
+    entry_source: EntrySource | None = Field(default=None)
+    intensity: WorkoutIntensity | None = Field(default=None)
     label: str | None = Field(default=None, max_length=255)
 
 

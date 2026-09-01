@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models import EventRecord
 from app.repositories.event_record_repository import EventRecordRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
-from app.schemas.enums import WorkoutType
+from app.schemas.enums import EntrySource, WorkoutType
 from app.schemas.model_crud.activities import EventRecordCreate, EventRecordDetailCreate
 from app.schemas.providers.garmin import ActivityJSON as GarminActivityJSON
 from app.services.providers.garmin.oauth import GarminOAuth
@@ -151,8 +151,9 @@ class TestGarminWorkouts:
         assert metrics["steps_count"] == 0
 
     def test_build_metrics_entry_source_and_label(self, garmin_workouts: GarminWorkouts) -> None:
-        """manual and isWebUpload both signal a non-device-synced activity; either should
-        map to "manual" so the value can't be told apart at the storage layer."""
+        """manual=True is self-reported data -> MANUAL. isWebUpload=True is a real FIT/GPX
+        file from another device (e.g. Wahoo/Coros) uploaded to Garmin Connect - it's still
+        measured data, not self-reported, so it must map to AUTOMATIC, not MANUAL."""
         base = {
             "userId": "user_123",
             "activityId": "act_manual",
@@ -163,13 +164,16 @@ class TestGarminWorkouts:
         }
 
         manual = GarminActivityJSON(**base, manual=True)
-        assert garmin_workouts._build_metrics(manual)["entry_source"] == "manual"
+        assert garmin_workouts._build_metrics(manual)["entry_source"] == EntrySource.MANUAL
 
         web_upload = GarminActivityJSON(**base, isWebUpload=True)
-        assert garmin_workouts._build_metrics(web_upload)["entry_source"] == "manual"
+        assert garmin_workouts._build_metrics(web_upload)["entry_source"] == EntrySource.AUTOMATIC
+
+        manual_takes_priority = GarminActivityJSON(**base, manual=True, isWebUpload=True)
+        assert garmin_workouts._build_metrics(manual_takes_priority)["entry_source"] == EntrySource.MANUAL
 
         auto = GarminActivityJSON(**base, manual=False, isWebUpload=False)
-        assert garmin_workouts._build_metrics(auto)["entry_source"] == "auto"
+        assert garmin_workouts._build_metrics(auto)["entry_source"] == EntrySource.AUTOMATIC
 
         unknown = GarminActivityJSON(**base)
         assert "entry_source" not in garmin_workouts._build_metrics(unknown)
