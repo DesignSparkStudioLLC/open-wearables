@@ -57,8 +57,7 @@
             "pages": [
               "providers/supported",
               "providers/coverage",
-              "providers/historical-data",
-              "providers/garmin-data-pipeline"
+              "providers/historical-data"
             ]
           },
           {
