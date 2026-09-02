@@ -4,6 +4,7 @@
 	import NavLink from './NavLink.svelte';
 	import LogoutButton from './LogoutButton.svelte';
 	import AppVersion from './AppVersion.svelte';
+	import Wordmark from './Wordmark.svelte';
 </script>
 
 <!-- Desktop only. Below lg the same destinations are reached through BottomNav
@@ -11,9 +12,8 @@
 <aside
 	class="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-border bg-surface lg:flex"
 >
-	<div class="flex h-14 items-center gap-2 px-5">
-		<span class="size-2.5 rounded-full bg-primary"></span>
-		<span class="text-sm font-semibold tracking-tight">Open Wearables</span>
+	<div class="flex h-28 items-center justify-center border-b border-border/60 px-6">
+		<Wordmark class="h-12" />
 	</div>
 
 	<nav aria-label="Main" class="flex-1 overflow-y-auto px-3 py-2">

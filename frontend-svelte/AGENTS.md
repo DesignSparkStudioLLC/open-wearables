@@ -275,6 +275,11 @@ see that a dynamic `item.href` was already resolved upstream.
 The `primary` flag decides what appears in the mobile bottom bar. At most four:
 the fifth slot is "More", and a unit test enforces that.
 
+`navLabelFor(pathname)` is the single derivation of "which section am I in". It
+feeds both the desktop header in `TopBar` and the `<title>` in
+`routes/(app)/+layout.svelte`, so a new destination gets a heading and a browser
+tab title without touching either file.
+
 ### Responsive shell
 
 `AppShell` composes the whole thing. Breakpoint is `lg` (1024px):
@@ -319,6 +324,44 @@ Keep `package.json`'s version in step with `frontend/package.json` while both
 frontends ship. It renders in the sidebar footer on desktop and in the More
 sheet on mobile.
 
+## Brand assets
+
+Copied from `frontend/` — the same files the React app ships, so both frontends
+look identical in a browser tab.
+
+| Where                              | What                                                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| [static/](static/)                 | `favicon.ico`, light/dark 16px + 32px PNGs, `apple-touch-icon.png`, `android-chrome-*.png`, `manifest.json` |
+| [src/lib/assets/](src/lib/assets/) | `logo.svg` (mark only), `logotype.svg` (mark + wordmark)                                                    |
+
+Icons are wired in [src/app.html](src/app.html), not per route — they never
+change, so they belong in the static shell. Light and dark variants are selected
+with `media="(prefers-color-scheme: …)"`, with `favicon.ico` as the fallback for
+browsers that ignore it.
+
+### The logos were edited on the way in
+
+The originals carry a hardcoded `<rect fill="black"/>` background and paint
+their paths `fill="white"`. That works in the React app, which is dark-only with
+a black sidebar. Here it rendered as a black tile on the light theme, and even on
+dark it did not match `--ow-surface`.
+
+Both files now have the rect removed, `fill="currentColor"` on the paths, and a
+viewBox tightened to the real content bounds (measured with `getBBox()`, not by
+eye). They inherit the theme's text colour and can be tinted anywhere.
+
+**If either logo is ever re-exported from a design tool, redo those three
+edits** — otherwise the black tile comes back.
+
+`Wordmark.svelte` inlines the SVG via a `?raw` import rather than using `<img
+src>`, because an `<img>` cannot inherit `currentColor`. It carries a targeted
+`eslint-disable` for `svelte/no-at-html-tags`: the content is a build-time asset,
+never user input. Callers set the height; the SVG keeps its aspect ratio.
+
+Not copied: `tanstack-circle-logo.png` and `tanstack-word-logo-white.svg` are
+leftovers from the React scaffold. The provider marks (`garmin.svg`,
+`polar.svg`, `suunto.svg`) stay in `frontend/` until a page here needs them.
+
 ## Styling is scoped — do not reach for global CSS
 
 A `<style>` block inside a `.svelte` file is scoped by the compiler. It rewrites
@@ -361,18 +404,20 @@ un-ignored first — git does not descend into an excluded directory.
 ```
 src/
 ├── app.css                         # design tokens + base styles
-├── app.html
+├── app.html                        # favicons + manifest live here
 ├── lib/
 │   ├── components/
 │   │   ├── PagePlaceholder.svelte
 │   │   ├── layout/
-│   │   │   ├── AppShell.svelte
-│   │   │   ├── BottomNav.svelte
-│   │   │   ├── LogoutButton.svelte
-│   │   │   ├── MoreSheet.svelte
+│   │   │   ├── AppShell.svelte     # composes the whole responsive shell
+│   │   │   ├── AppVersion.svelte   # "Version  0.7.0" footer row
+│   │   │   ├── BottomNav.svelte    # mobile bar: 4 destinations + More
+│   │   │   ├── LogoutButton.svelte # inert until auth lands
+│   │   │   ├── MoreSheet.svelte    # secondary destinations, mobile only
 │   │   │   ├── NavLink.svelte
-│   │   │   ├── Sidebar.svelte
+│   │   │   ├── Sidebar.svelte      # desktop only, lg and up
 │   │   │   ├── TopBar.svelte
+│   │   │   ├── Wordmark.svelte     # inlined logotype, inherits currentColor
 │   │   │   └── layout.browser.spec.ts
 │   │   └── ui/Sheet.svelte         # generic bottom sheet, no nav knowledge
 │   ├── config/nav.ts + nav.spec.ts # single source of truth for destinations

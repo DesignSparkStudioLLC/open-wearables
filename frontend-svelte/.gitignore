@@ -32,6 +32,7 @@ playwright-report
 !package.json
 !tsconfig.json
 !components.json
+!static/manifest.json
 
 # The root also ignores the .vscode directory outright. Git will not descend
 # into an excluded directory, so the directory has to be re-included before any

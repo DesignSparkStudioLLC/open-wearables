@@ -56,3 +56,8 @@ export function isNavItemActive(item: NavItem, pathname: string): boolean {
 	if (item.external) return false;
 	return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
+
+/** Label of the destination a path belongs to — drives the header and <title>. */
+export function navLabelFor(pathname: string): string | undefined {
+	return NAV_ITEMS.find((item) => isNavItemActive(item, pathname))?.label;
+}
