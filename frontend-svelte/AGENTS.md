@@ -23,12 +23,12 @@ bun pm view svelte version                    # what is current
 
 Verified current as of 2026-09-02 — all four at latest:
 
-| Package | Installed |
-| --- | --- |
-| `svelte` | 5.57.0 |
-| `@sveltejs/kit` | 2.70.3 |
-| `@sveltejs/adapter-node` | 5.5.7 |
-| `@sveltejs/vite-plugin-svelte` | 7.3.0 |
+| Package                        | Installed |
+| ------------------------------ | --------- |
+| `svelte`                       | 5.57.0    |
+| `@sveltejs/kit`                | 2.70.3    |
+| `@sveltejs/adapter-node`       | 5.5.7     |
+| `@sveltejs/vite-plugin-svelte` | 7.3.0     |
 
 Runes mode is **forced on** in [vite.config.ts](vite.config.ts) for every file
 outside `node_modules`, so the Svelte 4 component API is not merely discouraged
@@ -38,17 +38,17 @@ outside `node_modules`, so the Svelte 4 component API is not merely discouraged
 
 If you catch yourself writing anything in the left column, stop.
 
-| Svelte 4 (do not write) | Svelte 5 runes |
-| --- | --- |
-| `export let foo` | `let { foo } = $props()` |
-| `let count = 0` (reactive by position) | `let count = $state(0)` |
-| `$: doubled = count * 2` | `const doubled = $derived(count * 2)` |
-| `$: { sideEffect() }` | `$effect(() => { sideEffect() })` |
-| `on:click={handler}` | `onclick={handler}` |
-| `createEventDispatcher()` | callback props: `let { onsave } = $props()` |
-| `<slot />` | `{@render children()}` with `let { children } = $props()` |
-| `<slot name="header" />` | snippet prop: `{@render header?.()}` |
-| `writable()` + `$store` | `$state` inside a `.svelte.ts` module |
+| Svelte 4 (do not write)                | Svelte 5 runes                                            |
+| -------------------------------------- | --------------------------------------------------------- |
+| `export let foo`                       | `let { foo } = $props()`                                  |
+| `let count = 0` (reactive by position) | `let count = $state(0)`                                   |
+| `$: doubled = count * 2`               | `const doubled = $derived(count * 2)`                     |
+| `$: { sideEffect() }`                  | `$effect(() => { sideEffect() })`                         |
+| `on:click={handler}`                   | `onclick={handler}`                                       |
+| `createEventDispatcher()`              | callback props: `let { onsave } = $props()`               |
+| `<slot />`                             | `{@render children()}` with `let { children } = $props()` |
+| `<slot name="header" />`               | snippet prop: `{@render header?.()}`                      |
+| `writable()` + `$store`                | `$state` inside a `.svelte.ts` module                     |
 
 Two mechanical traps:
 
@@ -80,13 +80,13 @@ would reproduce that.
 
 What to reuse and what to rethink:
 
-| Layer | Approach |
-| --- | --- |
-| `src/lib/api/*`, `src/lib/utils/*` | Plain TypeScript, no React. Port selectively — copy what a slice needs, leave the rest. |
-| Type definitions (`api/types.ts`) | Copy the types a slice touches. Don't bulk-import all 881 lines. |
-| Endpoint constants | Copy per slice. Several in the React version are marked "may not exist in backend yet" — do not carry those over. |
-| Components | Rewrite. Do not transliterate JSX. |
-| Data fetching hooks | Rewrite. See "Open decisions". |
+| Layer                              | Approach                                                                                                          |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `src/lib/api/*`, `src/lib/utils/*` | Plain TypeScript, no React. Port selectively — copy what a slice needs, leave the rest.                           |
+| Type definitions (`api/types.ts`)  | Copy the types a slice touches. Don't bulk-import all 881 lines.                                                  |
+| Endpoint constants                 | Copy per slice. Several in the React version are marked "may not exist in backend yet" — do not carry those over. |
+| Components                         | Rewrite. Do not transliterate JSX.                                                                                |
+| Data fetching hooks                | Rewrite. See "Open decisions".                                                                                    |
 
 The backend contract is unchanged, so `frontend/src/lib/api/` is the reference
 for endpoint shapes and response types. Read it; don't copy it wholesale.
@@ -111,17 +111,17 @@ These came from the project owner and override general habit.
 
 Scaffolded with `sv create` (official Svelte CLI), not hand-written config.
 
-| Concern | Choice |
-| --- | --- |
-| Framework | SvelteKit 2 / Svelte 5 (runes mode forced on) |
-| Build | Vite 8 |
-| Language | TypeScript 6, `strict` |
-| Styling | Tailwind CSS v4 (no plugins) |
-| Adapter | `@sveltejs/adapter-node` |
-| Package manager / runtime | Bun 1.4 |
-| Unit + component tests | Vitest 4 |
-| E2E | Playwright |
-| Lint / format | ESLint 10 + Prettier |
+| Concern                   | Choice                                        |
+| ------------------------- | --------------------------------------------- |
+| Framework                 | SvelteKit 2 / Svelte 5 (runes mode forced on) |
+| Build                     | Vite 8                                        |
+| Language                  | TypeScript 6, `strict`                        |
+| Styling                   | Tailwind CSS v4 (no plugins)                  |
+| Adapter                   | `@sveltejs/adapter-node`                      |
+| Package manager / runtime | Bun 1.4                                       |
+| Unit + component tests    | Vitest 4                                      |
+| E2E                       | Playwright                                    |
+| Lint / format             | ESLint 10 + Prettier                          |
 
 ### Config lives in `vite.config.ts`
 
@@ -147,16 +147,55 @@ bun run test:e2e     # playwright
 bun run test         # both
 ```
 
+## Component granularity
+
+**Components are atomic.** Split one as soon as any logic starts to grow — do
+not wait for a line count. When a category directory fills up, split it into
+subdirectories too. The target is a deep tree of small components, which is the
+opposite of what `frontend/` became (`-seed-data-tab.tsx` is 1335 lines,
+`connection-card.tsx` 830).
+
+**This limit does not apply to test files** — see below.
+
 ## Testing
 
-The scaffold wires three tiers, distinguished **by filename**. Getting the
-suffix wrong sends a test to the wrong runner.
+Three tiers, distinguished **by filename**. Getting the suffix wrong sends a
+test to the wrong runner.
 
-| Pattern | Runner | Use for |
-| --- | --- | --- |
-| `*.spec.ts` | Vitest, node environment | Pure logic: formatters, parsers, API request building |
-| `*.svelte.spec.ts` | Vitest, real Chromium via `vitest-browser-svelte` | Component rendering and interaction |
-| `*.e2e.ts` | Playwright against a production build on :4173 | Full flows: login, navigation, a page loading real data |
+| Pattern             | Runner                                            | Use for                                                 |
+| ------------------- | ------------------------------------------------- | ------------------------------------------------------- |
+| `*.spec.ts`         | Vitest, node environment                          | Pure logic: formatters, parsers, API request building   |
+| `*.browser.spec.ts` | Vitest, real Chromium via `vitest-browser-svelte` | Component rendering and interaction                     |
+| `*.e2e.ts`          | Playwright against a production build on :4173    | Full flows: login, navigation, a page loading real data |
+
+`*.browser.spec.ts` is a deliberate rename from the scaffold's
+`*.svelte.spec.ts`. The patterns are wired in [vite.config.ts](vite.config.ts)
+— the `client` project's `include` **and** the `server` project's `exclude`. If
+you change one, change both, or browser tests will also run under node and fail.
+
+### Few, fat test files — one per category
+
+A test file covers a whole directory and is named after it:
+`components/layout/layout.browser.spec.ts` covers every component in
+`components/layout/`. Colocated, so it moves with the code.
+
+Optimise for **fewer test files, not smaller ones**. A large category spec is
+fine; one spec file per component is not — it doubles the file list and buries
+the component tree.
+
+### Test the contract, not the rendering
+
+A component test earns its place only when it guards behaviour that (a) can
+break silently and (b) is not already covered by e2e. **Most components get no
+test at all** — `PagePlaceholder`, `TopBar` and `Sidebar` have no contract worth
+guarding.
+
+Worth a test: `aria-current` on the active nav link; `rel="noreferrer"` on
+external links. Not worth a test: that a component renders its label, or that an
+`href` lands in the DOM — you would see that break instantly.
+
+Push the weight onto pure-logic unit tests (fast, node) and e2e flows. Component
+tests are the thin middle layer.
 
 Component tests run in an actual browser, not jsdom — assert through
 `page.getByRole(...)` and await the assertions:
@@ -197,10 +236,10 @@ needs it, and add it to all three theme blocks.
 
 ## Docker
 
-| Service | Port | Notes |
-| --- | --- | --- |
-| `frontend` (React) | 3000 | unchanged |
-| `frontend-svelte` | 3001 | this project |
+| Service            | Port | Notes        |
+| ------------------ | ---- | ------------ |
+| `frontend` (React) | 3000 | unchanged    |
+| `frontend-svelte`  | 3001 | this project |
 
 ```bash
 docker compose watch          # both frontends + backend, with sync
@@ -221,22 +260,136 @@ Read it through `$env/dynamic/public`, never `$env/static/public`. Dynamic keeps
 it a **runtime** value, so one prebuilt image can be pointed at any backend
 without a rebuild — a property the React app has and we must not lose.
 
+## Navigation
+
+[src/lib/config/nav.ts](src/lib/config/nav.ts) is the only place destinations
+are declared. `Sidebar`, `BottomNav` and `MoreSheet` all derive from it — adding
+a destination means editing that array and nothing else.
+
+Internal hrefs go through `resolve()` from `$app/paths`, which type-checks the
+path against the real route tree and applies `base`. A typo becomes a build
+error, not a dead link. `NavLink` and `BottomNav` carry an
+`eslint-disable svelte/no-navigation-without-resolve`, because the rule cannot
+see that a dynamic `item.href` was already resolved upstream.
+
+The `primary` flag decides what appears in the mobile bottom bar. At most four:
+the fifth slot is "More", and a unit test enforces that.
+
+### Responsive shell
+
+`AppShell` composes the whole thing. Breakpoint is `lg` (1024px):
+
+- **below `lg`** — sticky `TopBar` + fixed `BottomNav` (4 destinations + More).
+  `MoreSheet` is a bottom sheet holding the rest.
+- **`lg` and up** — fixed `Sidebar` with every destination; `BottomNav` is
+  removed from the DOM, not just hidden.
+
+Details worth preserving:
+
+- `min-h-dvh`, never `min-h-screen` — `vh` ignores mobile browser chrome and
+  leaves a gap or a scroll jump as the address bar collapses.
+- `ui/Sheet.svelte` is a native `<dialog>` opened with `showModal()`, which
+  supplies the focus trap, Esc-to-close, inert background and `::backdrop` for
+  free. This is why `bits-ui` is not a dependency yet. It knows nothing about
+  navigation — `MoreSheet` supplies the content.
+- The sheet is pinned with `inset-x-0 top-auto bottom-0`. Setting both `top` and
+  `bottom` (i.e. `inset-0`) stretches it to full height even with `h-auto`.
+- `BottomNav`'s column count is computed from `PRIMARY_NAV_ITEMS.length + 1` via
+  an inline style. A hardcoded `grid-cols-5` would leave a gap if a primary
+  destination were removed, and Tailwind cannot generate a class from a runtime
+  value.
+- `main` reserves `4.5rem + env(safe-area-inset-bottom)` so content clears the
+  bottom bar and the home indicator. An e2e test asserts they do not overlap.
+- Sidebar and bottom bar carry **different** `aria-label`s (`Main` / `Primary`).
+  Two landmarks with the same name is an accessibility smell.
+- `LogoutButton` appears in **both** the sidebar footer and the More sheet. The
+  sidebar is desktop-only, so without the sheet copy there is no way to log out
+  on a phone. It is inert until auth lands — wiring it means passing an
+  `onclick` at those two call sites.
+
+### App version
+
+The sidebar footer shows `v{version}` from `$app/environment`.
+[vite.config.ts](vite.config.ts) sets `version: { name: version }` from
+`package.json`; without it SvelteKit defaults to a build **timestamp**, which
+would render as `v1788389600520` and look plausible enough to miss. An e2e test
+asserts the string is semver-shaped.
+
+Keep `package.json`'s version in step with `frontend/package.json` while both
+frontends ship. It renders in the sidebar footer on desktop and in the More
+sheet on mobile.
+
+## Styling is scoped — do not reach for global CSS
+
+A `<style>` block inside a `.svelte` file is scoped by the compiler. It rewrites
+both selectors and `@keyframes` names with a per-component hash, so
+`animation: slide-up` in `Sheet.svelte` compiles to:
+
+```css
+dialog[open].svelte-11ek6gv {
+	animation: 0.2s cubic-bezier(0.32, 0.72, 0, 1) svelte-11ek6gv-slide-up;
+}
+```
+
+Nothing leaks and nothing collides, so component styles never need registering
+in [src/app.css](src/app.css). `app.css` is only for **tokens and base
+element styles** — things that are global by definition.
+
+Tailwind utility classes are global, but that is the point: they are generated
+on demand from the class names found in source, and each does exactly one thing.
+
+## The .json ignore trap
+
+The **repo root** `.gitignore` blanket-ignores `*.json` (line 167) to keep
+provider data dumps out of the tree, and ignores `.vscode` outright. New JSON
+config here is therefore ignored **silently** — `package.json` and
+`tsconfig.json` were both missing from git until this was caught.
+
+[.gitignore](.gitignore) re-includes them; a deeper `.gitignore` wins. **Adding
+a new tracked `.json` file means adding a `!` line there too.** Verify rather
+than assume:
+
+```bash
+git check-ignore -v frontend-svelte/<file>    # prints the rule, or nothing
+```
+
+Re-including a file inside an ignored _directory_ needs the directory
+un-ignored first — git does not descend into an excluded directory.
+
 ## Current state
 
 ```
 src/
-├── app.css              # design tokens + base styles
+├── app.css                         # design tokens + base styles
 ├── app.html
-├── lib/assets/
-└── routes/
-    ├── +layout.svelte   # imports app.css
-    └── +page.svelte     # TEMPORARY theme-check page — replace
+├── lib/
+│   ├── components/
+│   │   ├── PagePlaceholder.svelte
+│   │   ├── layout/
+│   │   │   ├── AppShell.svelte
+│   │   │   ├── BottomNav.svelte
+│   │   │   ├── LogoutButton.svelte
+│   │   │   ├── MoreSheet.svelte
+│   │   │   ├── NavLink.svelte
+│   │   │   ├── Sidebar.svelte
+│   │   │   ├── TopBar.svelte
+│   │   │   └── layout.browser.spec.ts
+│   │   └── ui/Sheet.svelte         # generic bottom sheet, no nav knowledge
+│   ├── config/nav.ts + nav.spec.ts # single source of truth for destinations
+│   └── utils/cn.ts
+├── routes/
+│   ├── +layout.svelte              # imports app.css
+│   ├── +page.ts                    # redirects / → /dashboard
+│   └── (app)/
+│       ├── +layout.svelte          # wraps children in AppShell
+│       └── {dashboard,users,syncs,webhooks,coverage,settings}/+page.svelte
+└── e2e/navigation.e2e.ts
 ```
 
-`clsx` and `tailwind-merge` are installed but **not yet used** — they were added
-ahead of need, against agreement 1. The `cn()` helper that combines them should
-land with the first component that accepts a `class` override prop. If that
-doesn't happen soon, uninstall them.
+Every page under `(app)` is a `PagePlaceholder`. The shell, routing, theming and
+tests are real; the pages are not.
+
+No auth yet, so `(app)` has no guard and nothing calls the backend.
 
 ## Open decisions
 
@@ -267,7 +420,10 @@ revisited; wait for the concrete trigger.
 ### Component primitives
 
 `bits-ui` + `shadcn-svelte` are the equivalents of Radix + shadcn/ui, and the
-component mapping is close to 1:1. Not installed yet: buttons, cards, inputs and
+component mapping is close to 1:1. Still not installed — the one overlay so far,
+`MoreSheet`, is a native `<dialog>`, which already provides focus trapping and
+Esc handling. `cn()` is named for the shadcn convention so the generator would
+work unmodified if they are added later. Buttons, cards, inputs and
 badges are plain styled elements. Add them at the first component needing real
 focus management — a dialog, select, or dropdown.
 
@@ -289,6 +445,12 @@ Choices already made, with reasons, so they are not re-litigated.
   a `fonts.googleapis.com` stylesheet. If the Inter brand face is wanted,
   self-host it (`@fontsource-variable/inter`) rather than reintroducing the
   external request.
+- **Native `<dialog>` over a headless overlay library** — `showModal()` gives
+  focus trap, Esc, inert background and `::backdrop` with no dependency.
+- **Mobile navigation is a bottom bar, not a hamburger drawer** — thumb-reachable
+  and always visible. The overflow sheet holds only secondary destinations.
+- **`cn` kept as the helper name** despite being opaque, so `shadcn-svelte` can
+  generate components without edits if it is ever added.
 
 ## Baseline measurements
 
@@ -297,10 +459,10 @@ are a full application; Svelte figures are near-empty. They are not a
 feature-for-feature comparison — they measure the **floor** each framework
 imposes, which is the part that never goes away.
 
-| | React (`frontend/`) | Svelte (foundations only) |
-| --- | --- | --- |
-| Client JS | 532 KB gzip, 93 chunks | 31 KB gzip, 9 chunks |
-| CSS | 137 KB raw / 20 KB gzip | 9.6 KB raw / 2.8 KB gzip |
+|           | React (`frontend/`)     | Svelte (foundations only) |
+| --------- | ----------------------- | ------------------------- |
+| Client JS | 532 KB gzip, 93 chunks  | 31 KB gzip, 9 chunks      |
+| CSS       | 137 KB raw / 20 KB gzip | 9.6 KB raw / 2.8 KB gzip  |
 
 Re-measure at parity before declaring a win:
 

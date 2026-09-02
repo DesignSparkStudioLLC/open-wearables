@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { version } from './package.json' with { type: 'json' };
 
 export default defineConfig({
 	server: {
@@ -22,7 +23,10 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-			adapter: adapter()
+			adapter: adapter(),
+			// Makes `version` from $app/environment the package version rather than
+			// SvelteKit's default build timestamp, so the sidebar can show it.
+			version: { name: version }
 		})
 	],
 	test: {
@@ -37,7 +41,10 @@ export default defineConfig({
 						provider: playwright(),
 						instances: [{ browser: 'chromium', headless: true }]
 					},
-					include: ['src/**/*.svelte.{test,spec}.{js,ts}'],
+					// Named for the runner, not for a component: these files aggregate
+					// a whole category, so `layout.browser.spec.ts` sits in
+					// components/layout/ and covers every component in it.
+					include: ['src/**/*.browser.spec.ts'],
 					exclude: ['src/lib/server/**']
 				}
 			},
@@ -48,7 +55,7 @@ export default defineConfig({
 					name: 'server',
 					environment: 'node',
 					include: ['src/**/*.{test,spec}.{js,ts}'],
-					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']
+					exclude: ['src/**/*.browser.spec.ts']
 				}
 			}
 		]
