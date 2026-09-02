@@ -280,6 +280,12 @@ feeds both the desktop header in `TopBar` and the `<title>` in
 `routes/(app)/+layout.svelte`, so a new destination gets a heading and a browser
 tab title without touching either file.
 
+`TopBar` shows the **centred logotype on mobile** and the section heading on
+desktop, where the sidebar already carries the brand. The bar is `h-20` below
+`lg` and `h-14` above it: the logotype stacks "Open / Wearables" on two lines and
+is illegible in a 56px bar. Do not swap it for the bare mark — the brand belongs
+there.
+
 ### Responsive shell
 
 `AppShell` composes the whole thing. Breakpoint is `lg` (1024px):
