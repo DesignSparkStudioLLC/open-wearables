@@ -14,6 +14,12 @@ on:
   pull_request:
     paths: *paths
 
+# Both jobs only read the repository. Without this the GITHUB_TOKEN inherits the
+# repository default, which can be write-all — flagged by CodeQL as
+# "Workflow does not contain permissions".
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: frontend-svelte
