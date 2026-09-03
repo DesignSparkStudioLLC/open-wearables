@@ -109,7 +109,9 @@ class Settings(BaseSettings):
     # None (default) preserves the previous unbounded behaviour. Note this is distinct
     # from ProviderCapabilities.max_historical_days, which only clamps the trailing
     # lookback of a *REST pull* sync - a path SDK payloads never take.
-    sdk_max_historical_days: int | None = None
+    # ge=0 because a negative value puts the cutoff in the FUTURE, which silently drops
+    # every SDK item rather than none - the opposite of what the operator asked for.
+    sdk_max_historical_days: int | None = Field(None, ge=0)
 
     # Grace-period flag: auto-dispatch historical sync after OAuth connect (default: true).
     # Pre-0.4.2 behaviour. Set to false once your integration calls /sync/historical explicitly.
