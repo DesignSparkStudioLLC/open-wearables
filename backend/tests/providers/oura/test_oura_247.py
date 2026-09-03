@@ -384,8 +384,8 @@ class TestOura247MetSeriesExpansion:
         assert samples[-1]["recorded_at"] == datetime(2024, 1, 15, 23, 59, 0, tzinfo=timezone.utc)
 
     def test_expand_met_series_carries_zone_offset(self, data_247: Oura247Data) -> None:
-        met = OuraMetJSON(interval=60, items=[1.0], timestamp="2024-01-15T00:00:00+00:00")
-        samples = data_247._expand_met_series(met, zone_offset="+02:00")
+        met = OuraMetJSON(interval=60, items=[1.0], timestamp="2024-01-15T00:00:00+02:00")
+        samples = data_247._expand_met_series(met)
 
         assert samples[0]["zone_offset"] == "+02:00"
 

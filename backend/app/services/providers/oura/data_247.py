@@ -201,7 +201,7 @@ class Oura247Data(Base247DataTemplate):
         return result
 
     @staticmethod
-    def _expand_met_series(met: OuraMetJSON | None, zone_offset: str | None = None) -> list[dict[str, Any]]:
+    def _expand_met_series(met: OuraMetJSON | None) -> list[dict[str, Any]]:
         """Expand an Oura intraday MET series into individual timestamped samples."""
         if met is None or not met.items or not met.interval or met.interval < 0:
             return []
@@ -209,6 +209,11 @@ class Oura247Data(Base247DataTemplate):
         start = parse_iso_datetime(met.timestamp)
         if start is None:
             return []
+
+        zone_offset = None
+        utcoff = start.utcoffset()
+        if utcoff is not None:
+            zone_offset = offset_to_iso(int(utcoff.total_seconds()))
 
         return [
             {"recorded_at": start + timedelta(seconds=met.interval * i), "value": value, "zone_offset": zone_offset}
@@ -278,7 +283,7 @@ class Oura247Data(Base247DataTemplate):
                         "zone_offset": activity_zone_offset,
                     }
                 )
-            result["met"].extend(self._expand_met_series(activity.met, activity_zone_offset))
+            result["met"].extend(self._expand_met_series(activity.met))
 
         return result, activity_scores
 
