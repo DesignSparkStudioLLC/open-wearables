@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from logging import Logger, getLogger
 from typing import Iterable, TypedDict
@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import sentry_sdk
 from pydantic import ValidationError
 
+from app.config import settings
 from app.constants.series_types.sdk import (
     WorkoutStatisticType,
     get_detail_field_from_workout_statistic_type,
@@ -73,7 +74,43 @@ class LoadDataResult(TypedDict):
     types: list[str]  # series types written
     sleep_saved: int
     dropped: list[InvalidRecord]
+    outside_window: dict[str, int]  # per-collection items dropped by the ingestion window
     validation_ms: float
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Naive datetimes are read as UTC so the window comparison can never raise."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _apply_historical_cutoff(request: SDKSyncRequest, max_days: int | None) -> dict[str, int]:
+    """Drop SDK items whose activity ended before the ingestion window. Mutates ``request``.
+
+    HealthKit hands the SDK a user's ENTIRE archive on first connect - years of it - and the
+    SDK ingest path has no date filter of its own. ``ProviderCapabilities.max_historical_days``
+    does not cover this: it clamps the trailing lookback of a *REST pull* sync, a path SDK
+    payloads never take (Apple is ``rest_pull=False``). Without a cap here, a single connect
+    can write millions of rows nobody reads.
+
+    Filtering is on ``endDate``, never ``startDate``. A session that began before the cutoff
+    but ended inside the window is real, recent data; keying on ``startDate`` would drop it.
+    The two error directions are not symmetric - keeping a slightly-old item costs one row,
+    dropping a genuine one loses it for good - so the boundary favours keeping.
+
+    Returns per-collection drop counts; empty when no cap is configured or nothing was old.
+    """
+    if max_days is None:
+        return {}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
+    counts: dict[str, int] = {}
+    for key, _ in _SDK_ITEM_MODELS:
+        items = getattr(request.data, key)
+        kept = [item for item in items if _as_utc(item.endDate) >= cutoff]
+        if len(kept) != len(items):
+            counts[key] = len(items) - len(kept)
+            setattr(request.data, key, kept)
+    return counts
 
 
 def _parse_sync_request(raw: dict) -> tuple[SDKSyncRequest, list[InvalidRecord]]:
@@ -357,6 +394,22 @@ class ImportService:
         started = time.perf_counter()
         request, dropped = _parse_sync_request(raw)
         validation_ms = round((time.perf_counter() - started) * 1000, 1)
+
+        # Enforce the ingestion window before ANY write. This is the single choke point:
+        # records, sleep and workouts all flow from `request` below, so capping here covers
+        # every collection and cannot be bypassed by a later code path.
+        outside_window = _apply_historical_cutoff(request, settings.sdk_max_historical_days)
+        if outside_window:
+            log_structured(
+                self.log,
+                "info",
+                "SDK items outside the ingestion window were dropped",
+                action="sdk_historical_cutoff_applied",
+                batch_id=batch_id,
+                user_id=user_id,
+                max_historical_days=settings.sdk_max_historical_days,
+                dropped_by_collection=outside_window,
+            )
         workouts_saved = 0
         records_saved = 0
         records_inserted = 0
@@ -417,6 +470,7 @@ class ImportService:
             "types": sorted(types),
             "sleep_saved": sleep_saved,
             "dropped": dropped,
+            "outside_window": outside_window,
             "validation_ms": validation_ms,
         }
 

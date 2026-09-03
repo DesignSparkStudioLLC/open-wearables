@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     # picked up. Disabled by default. Set via a compact duration string: "2d", "20h",
     # "90m", "1d12h". Capped per provider by max_historical_days.
     pull_sync_lookback: timedelta | None = None
+    # Hard cap on how far back SDK-ingested items (Apple HealthKit / Samsung Health /
+    # Google Health via the mobile SDK) are accepted. HealthKit hands the SDK a user's
+    # ENTIRE archive on first connect - years of it - and the SDK path has no date filter
+    # of its own, so one connect can write millions of rows nobody reads.
+    # None (default) preserves the previous unbounded behaviour. Note this is distinct
+    # from ProviderCapabilities.max_historical_days, which only clamps the trailing
+    # lookback of a *REST pull* sync - a path SDK payloads never take.
+    sdk_max_historical_days: int | None = None
+
     # Grace-period flag: auto-dispatch historical sync after OAuth connect (default: true).
     # Pre-0.4.2 behaviour. Set to false once your integration calls /sync/historical explicitly.
     # Will default to false in a future release.
