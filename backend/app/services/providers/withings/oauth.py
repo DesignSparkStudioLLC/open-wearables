@@ -8,8 +8,8 @@ from fastapi import HTTPException
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
 
 from app.config import settings
-from app.database import DbSession
-from app.schemas.auth import AuthenticationMethod
+from app.database import DbSession, SessionLocal
+from app.schemas.auth import AuthenticationMethod, LiveSyncMode
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.credentials import (
     OAuthTokenResponse,
@@ -187,4 +187,25 @@ class WithingsOAuth(BaseOAuthTemplate):
         return {"user_id": str(userid) if userid is not None else None, "username": None}
 
     def deregister_user(self, access_token: str, provider_user_id: str | None = None) -> None:
-        """Leave Notify teardown to the webhook subscription lifecycle."""
+        """Revoke this account's notify subscriptions.
+
+        Withings has no app-deregistration endpoint; disconnecting means dropping
+        the notify profiles this account owns. Called by disconnect, data purge
+        and account deletion while the connection is still active, so a
+        ``provider_user_id`` with exactly one active connection is this one.
+        """
+        # Subscriptions belong to the Withings account, not to one local profile,
+        # so a sibling profile still linked to it keeps them.
+        if not provider_user_id:
+            return
+        with SessionLocal() as db:
+            linked = self.connection_repo.get_all_by_provider_user_id(db, self.provider_name, provider_user_id)
+            if len(linked) != 1:
+                return
+            # Imported here: notify_service imports WithingsTokenError from this module.
+            from app.services.providers.withings.notify_service import WithingsNotifyService
+
+            service = WithingsNotifyService(connection_repo=self.connection_repo, oauth=self)
+            # Reconciling toward PULL means "no subscriptions desired", which
+            # prunes exactly the set this account owns.
+            service.sync_user(db, linked[0].user_id, LiveSyncMode.PULL)

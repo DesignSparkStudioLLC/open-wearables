@@ -3,7 +3,7 @@
 Dispatched when a provider's live_sync_mode is switched in settings. Runs
 asynchronously so the settings API response is not blocked. Providers with
 per-user subscriptions fan out from their own ``register_subscriptions`` into
-``sync_provider_user_subscription``, one task per active connection.
+``register_user_webhooks``, one task per active connection.
 """
 
 import asyncio
@@ -13,10 +13,6 @@ from uuid import UUID
 from celery import Task, shared_task
 
 from app.database import SessionLocal
-from app.integrations.celery.task_names import (
-    REGISTER_PROVIDER_WEBHOOKS_TASK,
-    SYNC_PROVIDER_USER_SUBSCRIPTION_TASK,
-)
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.enums import ProviderName
 from app.services.providers.factory import ProviderFactory
@@ -27,7 +23,6 @@ logger = getLogger(__name__)
 
 @shared_task(
     bind=True,
-    name=REGISTER_PROVIDER_WEBHOOKS_TASK,
     acks_late=True,
     reject_on_worker_lost=True,
     max_retries=3,
@@ -94,31 +89,42 @@ def register_provider_webhooks(self: Task, provider: str, callback_url: str) -> 
         raise self.retry(exc=exc)
 
 
-# Reconciling lists first and changes only the gap, so redelivery after a lost worker is safe.
 @shared_task(
     bind=True,
-    name=SYNC_PROVIDER_USER_SUBSCRIPTION_TASK,
     acks_late=True,
     reject_on_worker_lost=True,
     max_retries=3,
     default_retry_delay=60,
 )
-def sync_provider_user_subscription(self: Task, provider: str, user_id: str) -> dict:
-    """Reconcile one user's subscriptions with the provider's current live-sync mode."""
+def register_user_webhooks(self: Task, provider: str, user_id: str) -> dict:
+    """Register (or revoke) one user's subscriptions per the provider's live-sync mode.
+
+    Split from ``register_provider_webhooks`` rather than folded into it: each
+    user costs its own list-plus-subscribe round trips, so one task per user
+    keeps a failure and its retry scoped to that user instead of redoing every
+    connection. It is also what the OAuth callback enqueues for a single new
+    connection, which must not fan out over the whole provider.
+
+    The provider lists first and changes only the gap, so a redelivery after a
+    lost worker is safe.
+    """
     strategy = ProviderFactory().get_provider(provider)
-    service = strategy.webhook_service
-    if service is None:
+    # Per-user registration is a provider-local operation, not part of
+    # BaseWebhookService, so it is resolved the same way the webhook router
+    # resolves handle_probe.
+    register = getattr(strategy.webhook_service, "register_user_subscriptions", None)
+    if register is None:
         raise NotImplementedError(f"Provider '{provider}' does not manage per-user webhook subscriptions")
 
     with SessionLocal() as db:
-        results = service.reconcile_user_subscriptions(db, UUID(user_id))
+        results = register(db, UUID(user_id))
 
     failed = [result for result in results if result.get("status") == "error"]
     if failed:
         log_structured(
             logger,
             "error",
-            "Provider user subscription reconciliation had failures",
+            "Provider user webhook registration had failures",
             provider=provider,
             user_id=user_id,
             failed_items=failed,
@@ -126,14 +132,12 @@ def sync_provider_user_subscription(self: Task, provider: str, user_id: str) -> 
             max_retries=self.max_retries,
         )
         # Attach the cause; a bare MaxRetriesExceededError would lose the failed items.
-        raise self.retry(
-            exc=RuntimeError(f"{provider} subscription reconciliation failed for user {user_id}: {failed}")
-        )
+        raise self.retry(exc=RuntimeError(f"{provider} user webhook registration failed for user {user_id}: {failed}"))
 
     log_structured(
         logger,
         "info",
-        "Provider user subscriptions reconciled",
+        "Provider user webhooks registered",
         provider=provider,
         user_id=user_id,
         results=results,

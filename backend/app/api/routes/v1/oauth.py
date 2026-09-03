@@ -3,14 +3,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
 
-from celery import current_app as celery_app
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 
 from app.config import settings
 from app.database import DbSession
-from app.integrations.celery.task_names import SYNC_PROVIDER_USER_SUBSCRIPTION_TASK
-from app.schemas.auth import LiveSyncMode
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.credentials import AuthorizationURLResponse
 from app.schemas.model_crud.data_priority import (
@@ -124,24 +121,15 @@ def oauth_callback(
                 is_historical=True,
             )
 
-    # User-scoped webhook subscriptions exist only after OAuth has persisted
-    # the connection and its bearer token.
+    # Provider-side setup that needs the persisted connection and its bearer token.
+    # Never fail the callback for it: the account is already linked.
     try:
-        if (
-            strategy.capabilities.webhook_subscription_per_user
-            and strategy.webhook_service is not None
-            and strategy.effective_live_sync_mode(db) == LiveSyncMode.WEBHOOK
-        ):
-            celery_app.send_task(
-                SYNC_PROVIDER_USER_SUBSCRIPTION_TASK,
-                args=[provider.value, str(oauth_state.user_id)],
-                queue="webhook_sync",
-            )
+        strategy.on_connect(db, oauth_state.user_id)
     except Exception as e:
         log_structured(
             logger,
             "error",
-            "Provider user subscription scheduling failed",
+            "Provider on_connect hook failed",
             provider=provider.value,
             user_id=str(oauth_state.user_id),
             error=str(e),

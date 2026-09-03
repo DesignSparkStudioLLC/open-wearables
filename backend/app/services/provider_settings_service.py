@@ -2,7 +2,6 @@ from celery import current_app as celery_app
 
 from app.config import settings
 from app.database import DbSession
-from app.integrations.celery.task_names import REGISTER_PROVIDER_WEBHOOKS_TASK
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.auth.live_sync_mode import LiveSyncMode
 from app.schemas.enums import ProviderName
@@ -11,6 +10,8 @@ from app.schemas.model_crud.data_priority import (
     ProviderSettingUpdate,
 )
 from app.services.providers.factory import ProviderFactory
+
+_REGISTER_WEBHOOKS_TASK = "app.integrations.celery.tasks.register_provider_webhooks_task.register_provider_webhooks"
 
 
 class ProviderSettingsService:
@@ -80,7 +81,7 @@ class ProviderSettingsService:
         )
         if caps.webhook_registration_api and registers_on_mode_change:
             callback_url = f"{settings.api_base_url}{settings.api_v1}/providers/{provider}/webhooks"
-            celery_app.send_task(REGISTER_PROVIDER_WEBHOOKS_TASK, args=[provider, callback_url], queue="webhook_sync")
+            celery_app.send_task(_REGISTER_WEBHOOKS_TASK, args=[provider, callback_url], queue="webhook_sync")
 
         return ProviderSettingRead(
             provider=provider,

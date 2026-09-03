@@ -11,6 +11,7 @@ from pydantic import SecretStr
 from app.schemas.auth import LiveSyncMode
 from app.services.providers.withings.applis import SUBSCRIBED_APPLIS
 from app.services.providers.withings.notify_service import WithingsNotifyService
+from app.services.providers.withings.oauth import WithingsOAuth
 from app.services.providers.withings.webhook_handler import WithingsWebhookHandler
 
 CALLBACK_URL = "https://example.com/api/v1/providers/withings/webhooks?token=secret"
@@ -119,7 +120,7 @@ def _service() -> WithingsNotifyService:
     return service
 
 
-def test_sync_user_subscribes_every_missing_appli() -> None:
+def test_register_user_subscriptions_subscribes_every_missing_appli() -> None:
     service = _service()
     with (
         patch.object(service, "_list_subscriptions", return_value=[]),
@@ -131,7 +132,7 @@ def test_sync_user_subscribes_every_missing_appli() -> None:
     assert {call.args[0] for call in mock_apply.call_args_list} == {"subscribe"}
 
 
-def test_sync_user_revokes_our_own_profiles_when_switched_to_pull() -> None:
+def test_register_user_subscriptions_revokes_our_own_profiles_when_switched_to_pull() -> None:
     service = _service()
     existing = [SimpleNamespace(appli=1, callbackurl=CALLBACK_URL, comment="open-wearables")]
     with (
@@ -143,7 +144,7 @@ def test_sync_user_revokes_our_own_profiles_when_switched_to_pull() -> None:
     assert mock_apply.call_args.args[0] == "revoke"
 
 
-def test_sync_user_leaves_profiles_registered_by_another_host_alone() -> None:
+def test_register_user_subscriptions_leaves_profiles_registered_by_another_host_alone() -> None:
     service = _service()
     existing = [SimpleNamespace(appli=1, callbackurl="https://other.example/webhooks?token=x", comment=None)]
     with (
@@ -155,7 +156,9 @@ def test_sync_user_leaves_profiles_registered_by_another_host_alone() -> None:
     mock_apply.assert_not_called()
 
 
-def test_sync_user_skips_when_the_webhook_token_is_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_register_user_subscriptions_skips_when_the_webhook_token_is_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr("app.config.settings.withings_webhook_token", None)
 
     results = _service().sync_user(MagicMock(), uuid4(), LiveSyncMode.WEBHOOK)
@@ -163,15 +166,32 @@ def test_sync_user_skips_when_the_webhook_token_is_unconfigured(monkeypatch: pyt
     assert results == [{"status": "skipped", "reason": "webhook_token_unconfigured"}]
 
 
-def test_remove_user_keeps_subscriptions_a_sibling_profile_still_needs() -> None:
-    service = _service()
+@patch("app.services.providers.withings.notify_service.WithingsNotifyService.sync_user")
+@patch("app.services.providers.withings.oauth.SessionLocal")
+def test_deregister_user_revokes_only_when_it_is_the_last_link(mock_session: MagicMock, mock_sync: MagicMock) -> None:
+    # Subscriptions belong to the Withings account, so a sibling profile keeps them.
+    oauth = WithingsOAuth(
+        user_repo=MagicMock(), connection_repo=MagicMock(), provider_name="withings", api_base_url="https://x"
+    )
     user_id = uuid4()
-    service.connection_repo.get_by_user_and_provider.return_value = SimpleNamespace(provider_user_id="42")
-    service.connection_repo.get_all_by_provider_user_id.return_value = [
-        SimpleNamespace(user_id=user_id),
-        SimpleNamespace(user_id=uuid4()),
-    ]
+    lookup = oauth.connection_repo.get_all_by_provider_user_id
 
-    assert service.remove_user(MagicMock(), user_id) == [
-        {"status": "skipped", "reason": "provider_account_still_linked"}
-    ]
+    lookup.return_value = [SimpleNamespace(user_id=user_id), SimpleNamespace(user_id=uuid4())]
+    oauth.deregister_user("at", provider_user_id="42")
+    mock_sync.assert_not_called()
+
+    lookup.return_value = [SimpleNamespace(user_id=user_id)]
+    oauth.deregister_user("at", provider_user_id="42")
+
+    assert mock_sync.call_args.args[1] == user_id
+    assert mock_sync.call_args.args[2] == LiveSyncMode.PULL
+
+
+def test_deregister_user_without_a_provider_user_id_does_nothing() -> None:
+    oauth = WithingsOAuth(
+        user_repo=MagicMock(), connection_repo=MagicMock(), provider_name="withings", api_base_url="https://x"
+    )
+
+    oauth.deregister_user("at", provider_user_id=None)
+
+    oauth.connection_repo.get_all_by_provider_user_id.assert_not_called()

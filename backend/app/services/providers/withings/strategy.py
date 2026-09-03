@@ -1,11 +1,15 @@
 from uuid import UUID
 
+from celery import current_app as celery_app
+
 from app.database import DbSession
+from app.schemas.auth import LiveSyncMode
 from app.services.providers.base_strategy import BaseProviderStrategy, ProviderCapabilities, ProviderCoverage
 from app.services.providers.withings.coverage import HEALTH_SCORES, SLEEP_FIELDS, TIMESERIES, WORKOUT_FIELDS
 from app.services.providers.withings.data_247 import Withings247Data
 from app.services.providers.withings.notify_service import WithingsNotifyService
 from app.services.providers.withings.oauth import WithingsOAuth
+from app.services.providers.withings.tasks import REGISTER_USER_WEBHOOKS_TASK
 from app.services.providers.withings.webhook_handler import WithingsWebhookHandler
 from app.services.providers.withings.workouts import WithingsWorkouts
 
@@ -62,9 +66,19 @@ class WithingsStrategy(BaseProviderStrategy):
             webhook_subscription_per_user=True,
         )
 
-    def on_disconnect(self, db: DbSession, user_id: UUID) -> None:
-        """Revoke this user's notify subscriptions before their tokens are cleared."""
-        self.webhook_service.remove_user(db, user_id)
+    def on_connect(self, db: DbSession, user_id: UUID) -> None:
+        """Subscribe this user to notifications, once their bearer token is stored.
+
+        Enqueued rather than run inline: subscribing is a list plus one call per
+        appli, which the OAuth callback cannot wait on.
+        """
+        if self.effective_live_sync_mode(db) != LiveSyncMode.WEBHOOK:
+            return
+        celery_app.send_task(
+            REGISTER_USER_WEBHOOKS_TASK,
+            args=[self.name, str(user_id)],
+            queue="webhook_sync",
+        )
 
     @property
     def coverage(self) -> ProviderCoverage:

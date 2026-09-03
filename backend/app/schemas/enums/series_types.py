@@ -158,7 +158,7 @@ class SeriesType(str, Enum):
     garmin_body_battery = "garmin_body_battery"  # Garmin body battery (0-100)
 
     # =========================================================================
-    # WITHINGS-SPECIFIC METRICS (IDs 240-259)
+    # WITHINGS-SPECIFIC METRICS (IDs 240-249)
     # =========================================================================
     withings_pulse_wave_velocity = "withings_pulse_wave_velocity"
     withings_metabolic_age = "withings_metabolic_age"
@@ -308,7 +308,7 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (222, SeriesType.garmin_fitness_age, "years"),
     (223, SeriesType.garmin_body_battery, "percent"),
     # -------------------------------------------------------------------------
-    # WITHINGS-SPECIFIC METRICS (IDs 240-259)
+    # WITHINGS-SPECIFIC METRICS (IDs 240-249)
     # -------------------------------------------------------------------------
     (240, SeriesType.withings_pulse_wave_velocity, "m_per_s"),
     (241, SeriesType.withings_metabolic_age, "years"),
@@ -377,7 +377,7 @@ _CATEGORY_RANGES: list[tuple[range, str]] = [
     (range(160, 180), "Activity - Swimming"),
     (range(180, 200), "Activity - Generic"),
     (range(200, 220), "Environmental"),
-    (range(220, 260), "Provider-Specific"),  # 220-239 Garmin, 240-259 Withings
+    (range(220, 250), "Provider-Specific"),  # 220-239 Garmin, 240-249 Withings
     (range(500, 600), "Other"),
 ]
 

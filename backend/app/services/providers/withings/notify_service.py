@@ -14,7 +14,6 @@ from celery import current_app as celery_app
 from pydantic import BaseModel, ValidationError
 
 from app.database import DbSession, SessionLocal
-from app.integrations.celery.task_names import SYNC_PROVIDER_USER_SUBSCRIPTION_TASK
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.auth import LiveSyncMode
@@ -32,6 +31,7 @@ from app.services.providers.withings.callback import (
     withings_callback_url,
 )
 from app.services.providers.withings.oauth import WithingsTokenError
+from app.services.providers.withings.tasks import REGISTER_USER_WEBHOOKS_TASK
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
@@ -85,7 +85,7 @@ class WithingsNotifyService(BaseWebhookService):
         for user_id in subscription_owners.values():
             try:
                 celery_app.send_task(
-                    SYNC_PROVIDER_USER_SUBSCRIPTION_TASK,
+                    REGISTER_USER_WEBHOOKS_TASK,
                     args=["withings", user_id],
                     queue="webhook_sync",
                 )
@@ -109,31 +109,17 @@ class WithingsNotifyService(BaseWebhookService):
         )
         return results
 
-    def reconcile_user_subscriptions(self, db: DbSession, user_id: UUID) -> list[dict[str, Any]]:
-        """Reconcile one user against the currently configured live-sync mode."""
+    def register_user_subscriptions(self, db: DbSession, user_id: UUID) -> list[dict[str, Any]]:
+        """Bring one user's subscriptions in line with the configured live-sync mode.
+
+        The per-user counterpart of ``register_subscriptions`` and idempotent in
+        the same way, so a mode of ``pull`` revokes rather than creates. Entry
+        point of the ``register_user_webhooks`` task.
+        """
         mode = self.provider_settings_repo.get_live_sync_mode(db, "withings") or self._default_live_sync_mode
         if mode is None:
             return [{"status": "skipped", "reason": "no_live_sync_mode"}]
         return self.sync_user(db, user_id, mode)
-
-    def remove_user(self, db: DbSession, user_id: UUID) -> list[dict[str, Any]]:
-        """Revoke a user's subscriptions on disconnect, data purge or account deletion.
-
-        Subscriptions belong to the provider account rather than to one local profile,
-        so a sibling profile still linked to it keeps them. Reconciling toward PULL
-        prunes exactly the set this user owns.
-        """
-        if not self._is_last_active_link(db, user_id):
-            return [{"status": "skipped", "reason": "provider_account_still_linked"}]
-        return self.sync_user(db, user_id, LiveSyncMode.PULL)
-
-    def _is_last_active_link(self, db: DbSession, user_id: UUID) -> bool:
-        """Whether removing this connection leaves no active link to the same Withings account."""
-        connection = self.connection_repo.get_by_user_and_provider(db, user_id, "withings")
-        if connection is None or connection.provider_user_id is None:
-            return True
-        linked = self.connection_repo.get_all_by_provider_user_id(db, "withings", connection.provider_user_id)
-        return not any(other.user_id != user_id for other in linked)
 
     def sync_user(self, db: DbSession, user_id: UUID, mode: LiveSyncMode) -> list[dict[str, Any]]:
         """Reconcile the desired appli set without modifying foreign callback endpoints."""

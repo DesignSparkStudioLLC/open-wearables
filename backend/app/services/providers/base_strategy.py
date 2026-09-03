@@ -238,11 +238,12 @@ class BaseProviderStrategy(ABC):
         """Returns True if provider uses cloud OAuth API."""
         return self.oauth is not None
 
-    def on_disconnect(self, db: DbSession, user_id: UUID) -> None:
-        """Provider-side teardown to run while the connection's tokens are still valid.
+    def on_connect(self, db: DbSession, user_id: UUID) -> None:
+        """Provider-side setup to run once OAuth has persisted the connection and its token.
 
-        Called before the connection is revoked, by disconnect, data purge and
-        account deletion. Default is a no-op; override for providers that hold
+        Called from the OAuth callback, which swallows any failure so a
+        successfully linked account is never reported as a failed connect.
+        Default is a no-op; override for providers that must register
         per-connection state at the vendor (e.g. Withings notify subscriptions).
         """
 
